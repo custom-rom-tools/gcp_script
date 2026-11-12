@@ -214,16 +214,28 @@ function vm_exec() {
     fi
 }
 
+# Restore the local terminal after an interactive SSH/tmux session. If tmux or
+# htop was killed mid-session it can leave xterm mouse reporting enabled, which
+# makes click-drag paste mouse escape codes instead of selecting text.
+function restore_local_terminal() {
+    stty sane 2>/dev/null || true
+    printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1015l\033[?1049l\033[0m' 2>/dev/null || true
+}
+
 function vm_exec_tty() {
-    local ip
+    local ip rc
     ip=$(get_vm_ip 2>/dev/null)
     if [ -n "$ip" ] && [ -f "$HOME/.ssh/google_compute_engine" ]; then
         ssh -t -o ControlMaster=auto -o ControlPath="$SSH_SOCK" -o ControlPersist=15m \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=3 \
             -i "$HOME/.ssh/google_compute_engine" "$USER@$ip" "$@"
+        rc=$?
     else
         gcloud compute ssh "$INSTANCE" --zone="$ZONE" --project="$PROJECT" -- -t "$@"
+        rc=$?
     fi
+    restore_local_terminal
+    return $rc
 }
 
 function vm_scp() {
@@ -808,7 +820,8 @@ function ensure_disk_attached() {
 function wait_for_ssh() {
     echo -e "${YELLOW}>>> Waiting for SSH service to become ready...${NC}"
     rm -f "$VM_IP_CACHE" 2>/dev/null || true
-    for i in {1..25}; do
+    # A cold boot on this image needs ~20-60s before sshd accepts connections.
+    for i in {1..60}; do
         if is_vm_running && vm_exec "true" >/dev/null 2>&1; then
             echo -e "${GREEN}>>> SSH connection established!${NC}"
             # Ensure Auto-Idle Watchdog is active on boot
@@ -817,7 +830,7 @@ function wait_for_ssh() {
         fi
         sleep 2
     done
-    echo -e "${RED}>>> Timeout waiting for SSH. Attempting direct connection anyway...${NC}"
+    echo -e "${RED}>>> Timeout waiting for SSH (120s).${NC}"
     return 1
 }
 
@@ -940,10 +953,14 @@ function start_vm() {
 
     if [ $is_online -eq 0 ]; then
         echo -e " ${GREEN}✔${NC} VM '$INSTANCE' is already powered ON."
-        [ -n "$current_ip" ] && echo -e "    External IP: ${BOLD}${current_ip}${NC} (SSH port 22 ready)"
+        [ -n "$current_ip" ] && echo -e "    External IP: ${BOLD}${current_ip}${NC}"
     else
         echo -e "${YELLOW}>>> VM '$INSTANCE' is currently powered down.${NC}"
-        run_step "Powering on VM instance with capacity failover (c2d -> t2d -> c2)" start_vm_with_failover
+        if ! run_step "Powering on VM instance with capacity failover (c2d -> t2d -> c2)" start_vm_with_failover; then
+            echo -e "${RED} ✖ Could not power on VM '$INSTANCE' (no capacity in $ZONE).${NC}"
+            read -rp "Press Enter to return to menu..."
+            return 1
+        fi
     fi
 
     echo -e "\n>>> Step 2/3: Inspecting Attached Secondary Disks..."
@@ -963,15 +980,37 @@ function start_vm() {
         echo -e " ${YELLOW}ℹ${NC} No secondary ROM disk currently attached (use Disk Manager or start a build)."
     fi
 
-    echo -e "\n>>> Step 3/3: Verifying Specific Boot Mounts & RAM on VM..."
-    run_step "Checking boot-time mounts & RAM on VM" vm_exec "mountpoint -q /mnt/a16 || mountpoint -q /mnt/a17 || mountpoint -q /mnt/recovery || true"
+    echo -e "\n>>> Step 3/3: Verifying SSH access, boot mounts & RAM on VM..."
+    if ! wait_for_ssh; then
+        current_ip=$(get_vm_ip 2>/dev/null)
+        echo ""
+        echo -e "${RED}============================================================${NC}"
+        echo -e "${RED} ✖ VM '$INSTANCE' is RUNNING but SSH is NOT ready!${NC}"
+        echo -e "    External IP: ${BOLD}${current_ip:-unknown}${NC} | Status: RUNNING | SSH: FAILED"
+        echo -e "    sshd may still be booting, or the firewall/SSH key is not ready."
+        echo -e "    Wait a minute and retry, or run:"
+        echo -e "    ${BOLD}gcloud compute ssh $INSTANCE --zone=$ZONE${NC}"
+        echo -e "${RED}============================================================${NC}"
+        echo ""
+        read -rp "Press Enter to return to menu..."
+        return 1
+    fi
 
+    # Refresh the IP after boot; ephemeral external IPs change across restarts.
     current_ip=$(get_vm_ip 2>/dev/null)
+    local mount_list
+    mount_list=$(vm_exec 'for d in /mnt/a16 /mnt/a17 /mnt/recovery; do mountpoint -q "$d" && echo "$d"; done' 2>/dev/null || true)
     echo "RUNNING,$current_ip,$(date +%s)" > "$VM_STATE_CACHE" 2>/dev/null || true
     echo ""
     echo -e "${GREEN}============================================================${NC}"
-    echo -e "${GREEN} ✅ VM '$INSTANCE' is 100% ONLINE and READY!${NC}"
-    echo -e "    External IP: ${BOLD}${current_ip}${NC} | Status: RUNNING"
+    echo -e "${GREEN} ✅ VM '$INSTANCE' is ONLINE and READY!${NC}"
+    echo -e "    External IP: ${BOLD}${current_ip}${NC} | Status: RUNNING | SSH: OK"
+    if [ -n "$mount_list" ]; then
+        echo -e "    Mounted build storage: ${BOLD}$(echo "$mount_list" | tr '\n' ' ')${NC}"
+    else
+        echo -e "    ${YELLOW}ℹ No build disk mounted yet.${NC}"
+        echo -e "    It is mounted automatically when a build starts (Disk Manager / build menu)."
+    fi
     echo -e "${GREEN}============================================================${NC}"
     echo ""
     vm_exec "df -h / /mnt/a16 /mnt/a17 /mnt/recovery 2>/dev/null; free -h" || true
@@ -1434,8 +1473,11 @@ EOF_NS
     local tmux_conf tmux_b64
     tmux_conf=$(cat << 'EOF_TC'
 
-# GCP-TMUX-STYLE-V4: high-contrast dark footer, mouse scrolling, 50k scrollback, build label & DL/UL speed
-set -g mouse on
+# GCP-TMUX-STYLE-V5: high-contrast dark footer, 50k scrollback, build label & DL/UL speed
+# Mouse is OFF so the host terminal can select/copy text normally (no Shift/Option needed).
+# Inside tmux press Ctrl+B then m to toggle mouse mode on/off.
+set -g mouse off
+bind-key m set-option -g mouse
 set -g history-limit 50000
 set -g status-interval 2
 set -g status-style "bg=colour235,fg=colour252"
@@ -1452,12 +1494,13 @@ EOF_TC
 if ! grep -q 'GCP-NET-SPEED-V2' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '$net_b64' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V4' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V5' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,\$d;/# GCP-TMUX-STYLE-V/,\$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '$tmux_b64' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
 fi
-tmux set-option -g mouse on 2>/dev/null || true
+tmux set-option -g mouse off 2>/dev/null || true
+tmux bind-key m set-option -g mouse 2>/dev/null || true
 tmux set-option -g history-limit 50000 2>/dev/null || true
 tmux set-option -g status-interval 2 2>/dev/null || true
 tmux set-option -g status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
@@ -1467,7 +1510,7 @@ tmux set-window-option -g window-status-style 'bg=colour235,fg=colour245' 2>/dev
 tmux set-window-option -g window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
 tmux set-option -g status-right-length 85 2>/dev/null || true
 tmux set-option -g status-right '#(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
-tmux set-option -t rom-build mouse on 2>/dev/null || true
+tmux set-option -t rom-build mouse off 2>/dev/null || true
 tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
 tmux set-option -t rom-build status-interval 2 2>/dev/null || true
 tmux set-option -t rom-build status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
@@ -2680,6 +2723,8 @@ function menu_select_recovery_device() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# Never leave the host terminal stuck in mouse-reporting / alternate-screen mode.
+trap 'restore_local_terminal' EXIT
 while true; do
     clear 2>/dev/null || true
     echo -e "${CYAN}=================================================================${NC}"

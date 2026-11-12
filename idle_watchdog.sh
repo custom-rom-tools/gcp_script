@@ -6,8 +6,9 @@
 #
 # Activity checks:
 # 1. ROM/Recovery Compilation, Sync & Upload:
-#    soong_ui, soong_build, ninja, ckati, repo, upload.py, aria2c, git-remote-https,
-#    rclone, clang, rustc, javac, mka
+#    soong_ui, soong_build, ninja, siso, ckati, m, rom_build.sh, repo, upload.py,
+#    aria2c, git-remote-https, rclone, clang, rustc, javac, java, kotlinc,
+#    metalava, aapt2, d8/r8, mka
 # 2. Interactive User SSH Sessions:
 #    Active established SSH connection with terminal activity within last 30 min.
 #    (Idle/abandoned terminals with no typing for 30m do NOT block shutdown).
@@ -28,7 +29,7 @@ log_msg() {
 is_busy() {
     # 1. Check for active ROM/recovery build, sync, packaging, or upload processes
     local build_procs
-    build_procs=$(pgrep -f '[s]oong_ui|[s]oong_build|[n]inja|[c]kati|repo/main\.py|repo/repo|/usr/local/bin/repo|[u]pload\.py|[s]ignapk|[z]ipalign|[g]it-remote-https|[a]ria2c|[r]clone|[c]lang|[r]ustc|[j]avac|/d8([[:space:]]|$)|/bin/mka' 2>/dev/null | wc -l)
+    build_procs=$(pgrep -f '[s]oong_ui|[s]oong_build|[n]inja|[c]kati|[s]iso|/mnt/a17/evox/build/soong/bin/m |[r]om_build\.sh|[g]cp_build_runner|[g]cp_build_script|repo/main\.py|repo/repo|/usr/local/bin/repo|[u]pload\.py|[s]ignapk|[z]ipalign|[g]it-remote-https|[a]ria2c|[r]clone|[c]lang|[r]ustc|[j]avac|[j]ava|[k]otlinc|[m]etalava|[a]apt2|[s]oong_zip|/d8([[:space:]]|$)|/r8([[:space:]]|$)|/bin/mka' 2>/dev/null | wc -l)
     if [ "$build_procs" -gt 0 ]; then
         echo "BUILD_ACTIVE ($build_procs build processes running)"
         return 0
