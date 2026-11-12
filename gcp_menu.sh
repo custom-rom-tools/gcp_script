@@ -1481,10 +1481,11 @@ EOF_NS
     local tmux_conf tmux_b64
     tmux_conf=$(cat << 'EOF_TC'
 
-# GCP-TMUX-STYLE-V5: high-contrast dark footer, 50k scrollback, build label & DL/UL speed
-# Mouse is OFF so the host terminal can select/copy text normally (no Shift/Option needed).
-# Inside tmux press Ctrl+B then m to toggle mouse mode on/off.
-set -g mouse off
+# GCP-TMUX-STYLE-V6: high-contrast dark footer, mouse-wheel scrolling, 50k scrollback, build label & DL/UL speed
+# Mouse is ON so the wheel scrolls the pane. To select text natively, hold Option
+# (macOS) while dragging, or press Ctrl+B then m to toggle mouse off/on.
+set -g mouse on
+set -g set-clipboard on
 bind-key m set-option -g mouse
 set -g history-limit 50000
 set -g status-interval 2
@@ -1502,12 +1503,13 @@ EOF_TC
 if ! grep -q 'GCP-NET-SPEED-V2' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '$net_b64' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V5' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V6' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,\$d;/# GCP-TMUX-STYLE-V/,\$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '$tmux_b64' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
 fi
-tmux set-option -g mouse off 2>/dev/null || true
+tmux set-option -g mouse on 2>/dev/null || true
+tmux set-option -g set-clipboard on 2>/dev/null || true
 tmux bind-key m set-option -g mouse 2>/dev/null || true
 tmux set-option -g history-limit 50000 2>/dev/null || true
 tmux set-option -g status-interval 2 2>/dev/null || true
@@ -1518,7 +1520,9 @@ tmux set-window-option -g window-status-style 'bg=colour235,fg=colour245' 2>/dev
 tmux set-window-option -g window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
 tmux set-option -g status-right-length 85 2>/dev/null || true
 tmux set-option -g status-right '#(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
-tmux set-option -t rom-build mouse off 2>/dev/null || true
+# 'mouse' is a server option: a session-level value shadows the global one and
+# would break the Ctrl+B m toggle, so clear any stale override instead.
+tmux set-option -u -t rom-build mouse 2>/dev/null || true
 tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
 tmux set-option -t rom-build status-interval 2 2>/dev/null || true
 tmux set-option -t rom-build status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
@@ -1689,7 +1693,7 @@ echo "===LOG_END==="
         read -rp "Select option [0-4]: " log_choice
         case "$log_choice" in
             1)
-                vm_exec_tty "[ -f '$b_log' ] && tr '\r' '\n' < '$b_log' | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | less -R || echo 'No log file found.'"
+                vm_exec_tty "[ -f '$b_log' ] && tr '\r' '\n' < '$b_log' | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | less -R --mouse || echo 'No log file found.'"
                 ;;
             2)
                 download_artifacts "log"
@@ -1715,7 +1719,7 @@ echo "===LOG_END==="
                 echo ""
                 read -rp "Press Enter to return (or type 'less' to page all errors): " scan_ch
                 if [ "$scan_ch" = "less" ]; then
-                    vm_exec_tty "tr '\r' '\n' < '$b_log' 2>/dev/null | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | grep -inE -B 1 -A 15 'FAILED:' | less -R"
+                    vm_exec_tty "tr '\r' '\n' < '$b_log' 2>/dev/null | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | grep -inE -B 1 -A 15 'FAILED:' | less -R --mouse"
                 fi
                 ;;
             4)
@@ -2731,24 +2735,13 @@ function menu_select_recovery_device() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-# If the menu itself runs inside a local tmux, its mouse capture also blocks
-# normal drag selection. Turn it off for the duration and restore it on exit.
-LOCAL_TMUX_MOUSE_STATE=""
-if [ -n "${TMUX:-}" ]; then
-    LOCAL_TMUX_MOUSE_STATE=$(tmux show-options -gv mouse 2>/dev/null || true)
-    tmux set-option -g mouse off 2>/dev/null || true
-fi
-function restore_local_tmux_mouse() {
-    if [ -n "$LOCAL_TMUX_MOUSE_STATE" ]; then
-        tmux set-option -g mouse "$LOCAL_TMUX_MOUSE_STATE" 2>/dev/null || true
-    fi
-}
-# Clear stale mouse reporting before drawing the first menu.
+# Clear stale mouse reporting before drawing the first menu. This only affects
+# the host terminal; an enclosing tmux keeps its own mouse-wheel setting.
 restore_local_terminal
-# Never leave the host terminal/tmux stuck in mouse-reporting or alt-screen mode.
-trap 'restore_local_terminal; restore_local_tmux_mouse' EXIT
+# Never leave the host terminal stuck in mouse-reporting or alt-screen mode.
+trap 'restore_local_terminal' EXIT
 while true; do
-    # Also clear it on every redraw in case a step re-enabled it.
+    # Re-assert it on every redraw in case a step re-enabled mouse reporting.
     disable_mouse_reporting
     clear 2>/dev/null || true
     echo -e "${CYAN}=================================================================${NC}"
