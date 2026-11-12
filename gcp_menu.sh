@@ -214,12 +214,20 @@ function vm_exec() {
     fi
 }
 
+# Disable every common xterm mouse-reporting mode. If a previous tmux/htop
+# session was killed mid-run the host terminal can stay in mouse mode, making
+# click-drag send escape codes instead of selecting text.
+function disable_mouse_reporting() {
+    printf '\033[?9l\033[?1000l\033[?1001l\033[?1002l\033[?1003l\033[?1005l\033[?1006l\033[?1015l\033[?1016l' 2>/dev/null || true
+}
+
 # Restore the local terminal after an interactive SSH/tmux session. If tmux or
 # htop was killed mid-session it can leave xterm mouse reporting enabled, which
 # makes click-drag paste mouse escape codes instead of selecting text.
 function restore_local_terminal() {
     stty sane 2>/dev/null || true
-    printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1015l\033[?1049l\033[0m' 2>/dev/null || true
+    disable_mouse_reporting
+    printf '\033[?1049l\033[0m' 2>/dev/null || true
 }
 
 function vm_exec_tty() {
@@ -2723,9 +2731,25 @@ function menu_select_recovery_device() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-# Never leave the host terminal stuck in mouse-reporting / alternate-screen mode.
-trap 'restore_local_terminal' EXIT
+# If the menu itself runs inside a local tmux, its mouse capture also blocks
+# normal drag selection. Turn it off for the duration and restore it on exit.
+LOCAL_TMUX_MOUSE_STATE=""
+if [ -n "${TMUX:-}" ]; then
+    LOCAL_TMUX_MOUSE_STATE=$(tmux show-options -gv mouse 2>/dev/null || true)
+    tmux set-option -g mouse off 2>/dev/null || true
+fi
+function restore_local_tmux_mouse() {
+    if [ -n "$LOCAL_TMUX_MOUSE_STATE" ]; then
+        tmux set-option -g mouse "$LOCAL_TMUX_MOUSE_STATE" 2>/dev/null || true
+    fi
+}
+# Clear stale mouse reporting before drawing the first menu.
+restore_local_terminal
+# Never leave the host terminal/tmux stuck in mouse-reporting or alt-screen mode.
+trap 'restore_local_terminal; restore_local_tmux_mouse' EXIT
 while true; do
+    # Also clear it on every redraw in case a step re-enabled it.
+    disable_mouse_reporting
     clear 2>/dev/null || true
     echo -e "${CYAN}=================================================================${NC}"
     echo -e "${BOLD}              GCP BUILD & DOWNLOAD MANAGER                       ${NC}"
