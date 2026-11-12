@@ -1638,7 +1638,7 @@ echo "===LOG_END==="
         read -rp "Select option [0-4]: " log_choice
         case "$log_choice" in
             1)
-                vm_exec_tty "[ -f '$b_log' ] && less '$b_log' || echo 'No log file found.'"
+                vm_exec_tty "[ -f '$b_log' ] && tr '\r' '\n' < '$b_log' | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | less -R || echo 'No log file found.'"
                 ;;
             2)
                 download_artifacts "log"
@@ -1664,7 +1664,7 @@ echo "===LOG_END==="
                 echo ""
                 read -rp "Press Enter to return (or type 'less' to page all errors): " scan_ch
                 if [ "$scan_ch" = "less" ]; then
-                    vm_exec_tty "grep -inE -B 1 -A 15 'FAILED:' '$b_log' 2>/dev/null | less"
+                    vm_exec_tty "tr '\r' '\n' < '$b_log' 2>/dev/null | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | grep -inE -B 1 -A 15 'FAILED:' | less -R"
                 fi
                 ;;
             4)
