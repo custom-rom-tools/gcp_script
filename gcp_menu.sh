@@ -1434,7 +1434,9 @@ EOF_NS
     local tmux_conf tmux_b64
     tmux_conf=$(cat << 'EOF_TC'
 
-# GCP-TMUX-STYLE-V3: high-contrast dark footer with build label & live VM DL/UL speed
+# GCP-TMUX-STYLE-V4: high-contrast dark footer, mouse scrolling, 50k scrollback, build label & DL/UL speed
+set -g mouse on
+set -g history-limit 50000
 set -g status-interval 2
 set -g status-style "bg=colour235,fg=colour252"
 set -g status-left-length 30
@@ -1450,11 +1452,13 @@ EOF_TC
 if ! grep -q 'GCP-NET-SPEED-V2' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '$net_b64' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V3' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V4' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,\$d;/# GCP-TMUX-STYLE-V/,\$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '$tmux_b64' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
 fi
+tmux set-option -g mouse on 2>/dev/null || true
+tmux set-option -g history-limit 50000 2>/dev/null || true
 tmux set-option -g status-interval 2 2>/dev/null || true
 tmux set-option -g status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
 tmux set-option -g status-left-length 30 2>/dev/null || true
@@ -1463,6 +1467,8 @@ tmux set-window-option -g window-status-style 'bg=colour235,fg=colour245' 2>/dev
 tmux set-window-option -g window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
 tmux set-option -g status-right-length 85 2>/dev/null || true
 tmux set-option -g status-right '#(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
+tmux set-option -t rom-build mouse on 2>/dev/null || true
+tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
 tmux set-option -t rom-build status-interval 2 2>/dev/null || true
 tmux set-option -t rom-build status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
 tmux set-option -t rom-build status-left-length 30 2>/dev/null || true

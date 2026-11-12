@@ -314,11 +314,13 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
 EOF_NETSPEED
 sudo chmod +x /usr/local/bin/vm_net_speed.sh
 
-if ! grep -q "GCP-TMUX-STYLE-V3" /etc/tmux.conf 2>/dev/null; then
+if ! grep -q "GCP-TMUX-STYLE-V4" /etc/tmux.conf 2>/dev/null; then
   sudo sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   sudo tee -a /etc/tmux.conf > /dev/null << 'EOF_TMUX'
 
-# GCP-TMUX-STYLE-V3: high-contrast dark footer with build label & live VM DL/UL speed
+# GCP-TMUX-STYLE-V4: high-contrast dark footer, mouse scrolling, 50k scrollback, build label & DL/UL speed
+set -g mouse on
+set -g history-limit 50000
 set -g status-interval 2
 set -g status-style "bg=colour235,fg=colour252"
 set -g status-left-length 30
