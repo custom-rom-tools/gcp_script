@@ -225,11 +225,11 @@ def resolve_artifacts(raw_inputs: list[str], build_type: str = "rom", remote_sub
     return targets
 
 
-def upload_sf(files: list[Path], remote_subdir: str, key_file: Path | None) -> bool:
-    """Uploads artifacts to SourceForge via rsync over SSH."""
+def upload_sf(files: list[Path], remote_subdir: str, key_file: Path | None) -> str | None:
+    """Uploads artifacts to SourceForge via rsync over SSH. Returns URL on success."""
     if not key_file:
         print(">>> [INFO] SourceForge SSH key not available. Skipping SourceForge upload.")
-        return False
+        return None
 
     dest = f"/home/frs/project/{SF_PROJECT}/{remote_subdir.strip('/')}/"
     print(f"\n>>> [SF UPLOAD] Uploading to {dest}...")
@@ -255,14 +255,15 @@ def upload_sf(files: list[Path], remote_subdir: str, key_file: Path | None) -> b
         ]
         res = subprocess.run(cmd)
         if res.returncode == 0:
-            print(f">>> [SF UPLOAD] Success! View at: https://sourceforge.net/projects/{SF_PROJECT}/files/{remote_subdir.strip('/')}/")
-            return True
+            url = f"https://sourceforge.net/projects/{SF_PROJECT}/files/{remote_subdir.strip('/')}/"
+            print(f">>> [SF UPLOAD] Success! View at: {url}")
+            return url
         else:
             print(f">>> [WARN] rsync exited with returncode {res.returncode}")
-            return False
+            return None
     except Exception as e:
         print(f">>> [WARN] SourceForge upload failed: {e}")
-        return False
+        return None
 
 
 def get_gofile_server() -> str:
@@ -284,10 +285,11 @@ def get_gofile_server() -> str:
     return "store3"
 
 
-def upload_fallback(files: list[Path]):
-    """Uploads cooked artifacts to Gofile.io with Filebin fallback, displaying live progress."""
+def upload_fallback(files: list[Path]) -> list[tuple[str, str, str]]:
+    """Uploads cooked artifacts to Gofile.io with Filebin fallback, returning (provider, filename, url) entries."""
     print("\n>>> [GOFILE] Generating direct download links via Gofile.io...")
     gf_server = get_gofile_server()
+    results: list[tuple[str, str, str]] = []
 
     for f in files:
         size_mb = f.stat().st_size / (1024 * 1024)
@@ -310,6 +312,7 @@ def upload_fallback(files: list[Path]):
                         link = resp.get("data", {}).get("downloadPage")
                         if link:
                             print(f"\n✅ Download link ({f.name}) [Gofile]: {link}")
+                            results.append(("Gofile", f.name, link))
                             break
             except Exception as e:
                 if attempt == 2:
@@ -336,10 +339,75 @@ def upload_fallback(files: list[Path]):
                     if "file" in fb_data:
                         link = f"https://filebin.net/{bin_id}/{f.name}"
                         print(f"\n✅ Download link ({f.name}) [Filebin]: {link}")
+                        results.append(("Filebin", f.name, link))
             except Exception as e:
                 print(f"\n>>> [WARN] Filebin fallback exception: {e}")
             finally:
                 tmp_fb.unlink(missing_ok=True)
+
+    return results
+
+
+def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> None:
+    """Persist upload links to ~/.upload_links.log and GCP instance metadata (readable after VM stops)."""
+    if not entries:
+        return
+
+    ts = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+    lines = [f"[{ts}] [{remote_subdir}] [{prov}] {name} -> {url}" for prov, name, url in entries]
+
+    print("\n=== UPLOAD LINKS SUMMARY ===")
+    for line in lines:
+        print(f" {line}")
+    print("============================")
+
+    # 1. Append to local persistent log on VM
+    vm_log = Path.home() / ".upload_links.log"
+    try:
+        with vm_log.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except Exception as e:
+        print(f">>> [WARN] Failed to write {vm_log}: {e}")
+
+    # 2. Persist to GCP instance metadata so links remain accessible after VM powers off
+    try:
+        hdr = ["-H", "Metadata-Flavor: Google"]
+        name_res = subprocess.run(
+            ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/instance/name"],
+            capture_output=True, text=True, timeout=3,
+        )
+        zone_res = subprocess.run(
+            ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/instance/zone"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if name_res.returncode != 0 or zone_res.returncode != 0:
+            return
+        inst_name = name_res.stdout.strip()
+        inst_zone = zone_res.stdout.strip().split("/")[-1]
+
+        existing_res = subprocess.run(
+            ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/instance/attributes/upload-links"],
+            capture_output=True, text=True, timeout=3,
+        )
+        existing_lines = [l for l in existing_res.stdout.splitlines() if l.strip()] if existing_res.returncode == 0 else []
+        merged = (existing_lines + lines)[-80:]
+
+        tmp_meta = Path("/tmp/upload_links_meta.txt")
+        tmp_meta.write_text("\n".join(merged) + "\n", encoding="utf-8")
+        try:
+            subprocess.run(
+                [
+                    "gcloud", "compute", "instances", "add-metadata", inst_name,
+                    f"--zone={inst_zone}",
+                    f"--metadata-from-file=upload-links={tmp_meta}",
+                    "--quiet",
+                ],
+                capture_output=True, text=True, timeout=20,
+            )
+        finally:
+            tmp_meta.unlink(missing_ok=True)
+    except Exception as e:
+        print(f">>> [WARN] Failed to update GCP metadata upload-links: {e}")
 
 
 def main():
@@ -368,14 +436,19 @@ def main():
     for f in files:
         print(f" - {f.name} ({f.stat().st_size / (1024 * 1024):.2f} MB)")
 
+    uploaded_links: list[tuple[str, str, str]] = []
+
     key_file = get_sf_key()
-    sf_success = False
     if key_file:
-        sf_success = upload_sf(files, remote_subdir, key_file)
+        sf_url = upload_sf(files, remote_subdir, key_file)
+        if sf_url:
+            uploaded_links.append(("SourceForge", remote_subdir, sf_url))
 
     skip_gofile = os.environ.get("SKIP_GOFILE", "").strip().lower() in ("1", "true", "yes")
     if not skip_gofile:
-        upload_fallback(files)
+        uploaded_links.extend(upload_fallback(files))
+
+    record_links(uploaded_links, remote_subdir)
 
     print("\nUpload complete.")
 

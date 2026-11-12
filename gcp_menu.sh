@@ -11,6 +11,7 @@ INSTANCE="rom-build-farm"
 ZONE="us-central1-a"
 PROJECT="project-53211141-f92a-48c1-b88"
 LOCAL_OUT_DIR="$HOME/Downloads"
+LOCAL_LINKS_FILE="$HOME/.gcp_upload_links.log"
 GENERAL_DISK="gcp-general-disk"
 GENERAL_DEV_NAME="rom-general"
 
@@ -1181,6 +1182,19 @@ function prompt_options() {
         fi
     fi
 
+    if [ -z "$GOFILE_OPT" ]; then
+        if [ -t 0 ]; then
+            read -rp " Upload to Gofile.io too? (Y/n): " gf_in
+            if [[ "$gf_in" =~ ^[Nn]$ ]]; then
+                GOFILE_OPT="false"
+            else
+                GOFILE_OPT="true"
+            fi
+        else
+            GOFILE_OPT="true"
+        fi
+    fi
+
     if [ -z "$SHUT_OPT" ]; then
         if [ -t 0 ]; then
             read -rp " Auto power off VM when finished? (Y/n): " auto_in
@@ -1235,6 +1249,7 @@ function run_build() {
     fi
     echo -e " Script URL          : $script_url"
     echo -e " SourceForge Upload  : $SF_OPT"
+    echo -e " Gofile.io Upload    : $GOFILE_OPT"
     echo -e " Auto-Shutdown VM    : $SHUT_OPT"
     [ "$FORMAT_DISK_OPT" = "true" ] && echo -e " Format Disk First   : ${RED}true (--format)${NC}"
     echo -e "${CYAN}============================================================${NC}"
@@ -1298,6 +1313,7 @@ echo \"PREV=\$PREV|USED=\$USED|DIRS=\$DIRS\"
 #!/usr/bin/env bash
 export BUILD_VARIANT='$BUILD_TYPE_OPT'
 export SF_UPLOAD='$SF_OPT'
+export SKIP_GOFILE='$([ "$GOFILE_OPT" = "false" ] && echo "true" || echo "false")'
 export AUTO_SHUTDOWN='$SHUT_OPT'
 $( [ -n "${DEVICE_OPT:-}" ] && echo "export DEVICE='$DEVICE_OPT'" )
 $net_speed_setup
@@ -1363,12 +1379,18 @@ EOF_RUNNER
     # Reset options so subsequent builds prompt anew
     BUILD_TYPE_OPT=""
     SF_OPT=""
+    GOFILE_OPT=""
     SHUT_OPT=""
     FORMAT_DISK_OPT=""
     DEVICE_OPT=""
 
     vm_exec "printf '%s' '$runner_b64' | base64 -d > /tmp/gcp_build_runner.sh && chmod +x /tmp/gcp_build_runner.sh && tmux kill-session -t rom-build 2>/dev/null || true"
     vm_exec_tty "tmux new-session -A -s rom-build 'bash /tmp/gcp_build_runner.sh'"
+    sync_upload_links >/dev/null 2>&1 || true
+    if [ -s "$LOCAL_LINKS_FILE" ]; then
+        echo -e "\n${CYAN}>>> Saved Upload Links ($LOCAL_LINKS_FILE):${NC}"
+        tail -n 5 "$LOCAL_LINKS_FILE"
+    fi
 }
 
 # Generates remote shell snippet to install /usr/local/bin/vm_net_speed.sh and configure tmux status bar.
@@ -1566,6 +1588,11 @@ echo "===LOG_END==="
         elif [[ "$b_status" == *"SUCCESS"* ]]; then
             echo -e " ${BOLD}BUILD STATE   :${NC} ${GREEN}✔ SUCCESS${NC}"
             echo -e " ${BOLD}DETAILS       :${NC} Completed and uploaded successfully."
+            sync_upload_links >/dev/null 2>&1 || true
+            if [ -s "$LOCAL_LINKS_FILE" ]; then
+                echo -e " ${BOLD}LATEST LINKS  :${NC}"
+                tail -n 3 "$LOCAL_LINKS_FILE" | sed 's/^/   /'
+            fi
         elif [[ "$b_status" == *"FAILED"* || "$b_tail" == *"ninja failed"* || "$b_tail" == *"failed to build"* ]]; then
             echo -e " ${BOLD}BUILD STATE   :${NC} ${RED}✖ FAILED${NC}"
             echo -e " ${BOLD}LAST PROGRESS :${NC} ${YELLOW}${b_progress}${NC}"
@@ -2300,6 +2327,53 @@ function menu_manage_swap() {
     done
 }
 
+function sync_upload_links() {
+    local tmp_merge
+    tmp_merge=$(mktemp /tmp/gcp_links.XXXXXX)
+    [ -f "$LOCAL_LINKS_FILE" ] && cat "$LOCAL_LINKS_FILE" > "$tmp_merge"
+
+    # Pull from GCP instance metadata (works even when VM is STOPPED)
+    gcloud compute instances describe "$INSTANCE" --zone="$ZONE" --project="$PROJECT" \
+        --format="value(metadata.items.filter(key:upload-links).value)" 2>/dev/null >> "$tmp_merge" || true
+
+    # If VM is running, also pull ~/.upload_links.log directly
+    local st
+    st=$(get_vm_status 2>/dev/null || echo "UNKNOWN")
+    if [ "$st" = "RUNNING" ]; then
+        vm_exec "cat ~/.upload_links.log 2>/dev/null || true" 2>/dev/null >> "$tmp_merge" || true
+    fi
+
+    # Deduplicate preserving order and drop empty lines
+    awk 'NF && !seen[$0]++' "$tmp_merge" > "${tmp_merge}.clean"
+    mv "${tmp_merge}.clean" "$LOCAL_LINKS_FILE"
+    rm -f "$tmp_merge"
+}
+
+function view_upload_links() {
+    echo ""
+    run_step "Syncing upload links (GCP metadata + local cache)" sync_upload_links
+    clear 2>/dev/null || true
+    echo -e "${CYAN}=================================================================${NC}"
+    echo -e "${BOLD}           UPLOAD LINKS HISTORY (Gofile / SF / Filebin)          ${NC}"
+    echo -e "${CYAN}=================================================================${NC}"
+    echo -e " Cache File: ${CYAN}${LOCAL_LINKS_FILE}${NC} (Accessible even when VM is stopped)"
+    echo -e "${CYAN}-----------------------------------------------------------------${NC}"
+    if [ -s "$LOCAL_LINKS_FILE" ]; then
+        nl -w2 -s') ' "$LOCAL_LINKS_FILE"
+    else
+        echo -e " ${YELLOW}No upload links recorded yet.${NC}"
+    fi
+    echo -e "${CYAN}=================================================================${NC}"
+    if [ -t 0 ]; then
+        read -rp " Press Enter to return (or 'c' to clear local cache): " link_ch
+        if [[ "$link_ch" =~ ^[Cc]$ ]]; then
+            rm -f "$LOCAL_LINKS_FILE"
+            echo -e "${YELLOW}>>> Local link cache cleared.${NC}"
+            sleep 1
+        fi
+    fi
+}
+
 function show_info() {
     local current_mt
     current_mt=$(gcloud compute instances describe "$INSTANCE" --zone="$ZONE" --project="$PROJECT" --format="value(machineType.basename())" 2>/dev/null || echo "c2d-standard-16")
@@ -2396,7 +2470,7 @@ function menu_manage_machine_type() {
 # Non-interactive CLI flag support
 case "$1" in
     build|build-rom)
-        ROM="evox"; VER="16"; DEV="RMX2170"; TYPE=""; SF="false"; SHUT="true"; FORMAT_DISK_OPT="false"
+        ROM="evox"; VER="16"; DEV="RMX2170"; TYPE=""; SF="false"; GOFILE="true"; SHUT="true"; FORMAT_DISK_OPT="false"
         shift
         while [ "$#" -gt 0 ]; do
             case "$1" in
@@ -2405,13 +2479,15 @@ case "$1" in
                 --dev|--device) DEV="$2"; shift 2 ;;
                 --type|--variant) TYPE="$2"; shift 2 ;;
                 --sf) SF="true"; shift ;;
+                --gofile) GOFILE="true"; shift ;;
+                --no-gofile) GOFILE="false"; shift ;;
                 --keep-alive) SHUT="false"; shift ;;
                 --format) FORMAT_DISK_OPT="true"; shift ;;
                 *) shift ;;
             esac
         done
         [ -n "$TYPE" ] && BUILD_TYPE_OPT="$TYPE"
-        SF_OPT="$SF"; SHUT_OPT="$SHUT"
+        SF_OPT="$SF"; GOFILE_OPT="$GOFILE"; SHUT_OPT="$SHUT"
         DEV_LOWER=$(echo "$DEV" | tr '[:upper:]' '[:lower:]')
         if [ "$DEV_LOWER" = "all" ]; then
             run_build "aosp-${VER}" "${ROM}_all.sh" "$ROM (A${VER}) - All Devices"
@@ -2422,7 +2498,7 @@ case "$1" in
         ;;
 
     recovery|build-recovery)
-        FLAVOR="ofrp"; DEV="sm7125"; TYPE=""; SF="false"; SHUT="true"; FORMAT_DISK_OPT="false"
+        FLAVOR="ofrp"; DEV="sm7125"; TYPE=""; SF="false"; GOFILE="true"; SHUT="true"; FORMAT_DISK_OPT="false"
         shift
         while [ "$#" -gt 0 ]; do
             case "$1" in
@@ -2430,13 +2506,15 @@ case "$1" in
                 --dev|--device) DEV="$2"; shift 2 ;;
                 --type|--variant) TYPE="$2"; shift 2 ;;
                 --sf) SF="true"; shift ;;
+                --gofile) GOFILE="true"; shift ;;
+                --no-gofile) GOFILE="false"; shift ;;
                 --keep-alive) SHUT="false"; shift ;;
                 --format) FORMAT_DISK_OPT="true"; shift ;;
                 *) shift ;;
             esac
         done
         [ -n "$TYPE" ] && BUILD_TYPE_OPT="$TYPE"
-        SF_OPT="$SF"; SHUT_OPT="$SHUT"
+        SF_OPT="$SF"; GOFILE_OPT="$GOFILE"; SHUT_OPT="$SHUT"
         DEVICE_OPT="$DEV"
         if [ "$FLAVOR" = "twrp" ]; then
             run_build "recovery" "twrp_sm7125.sh" "TWRP Recovery ($DEV)"
@@ -2498,6 +2576,7 @@ case "$1" in
         ;;
     start) start_vm; exit 0 ;;
     stop) stop_vm; exit 0 ;;
+    links|upload-links) view_upload_links; exit 0 ;;
     download-log|log-download) download_artifacts "log"; exit 0 ;;
     logs|log|status-build) view_build_logs; exit 0 ;;
     stop-build|cancel-build|kill-build) stop_build; exit 0 ;;
@@ -2632,10 +2711,11 @@ while true; do
     echo -e "  ${BOLD}21)${NC} ${CYAN}Machine Type Switcher${NC}"
     echo -e "  ${BOLD}22)${NC} SSH Console"
     echo -e "  ${BOLD}23)${NC} Setup & Tools"
+    echo -e "  ${BOLD}24)${NC} ${CYAN}Upload Links (Gofile / SF - Works when VM stopped)${NC}"
     echo ""
     echo -e "   ${RED}q)${NC} Quit"
     echo -e "${CYAN}=================================================================${NC}"
-    read -rp " Select option [1-23 or q]: " choice
+    read -rp " Select option [1-24 or q]: " choice
 
     case "$choice" in
         1) menu_select_rom_device "aosp-16" "evolution" "Evolution X 16" ;;
@@ -2714,6 +2794,9 @@ while true; do
             ;;
         23)
             menu_tools
+            ;;
+        24)
+            view_upload_links
             ;;
         q|Q|exit)
             echo "Goodbye!"
