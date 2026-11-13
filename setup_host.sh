@@ -167,6 +167,11 @@ log_msg() {
 }
 
 is_busy() {
+    if [ -e /run/gcp-build-active ]; then
+        echo "BUILD_RUNNER_ACTIVE"
+        return 0
+    fi
+
     # 1. Check for active ROM/recovery build, sync, packaging, or upload processes
     local build_procs
     build_procs=$(pgrep -f '[s]oong_ui|[s]oong_build|[n]inja|[c]kati|repo/main\.py|repo/repo|/usr/local/bin/repo|[u]pload\.py|[s]ignapk|[z]ipalign|[g]it-remote-https|[a]ria2c|[r]clone|[c]lang|[r]ustc|[j]avac|/d8([[:space:]]|$)|/bin/mka' 2>/dev/null | wc -l)

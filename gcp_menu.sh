@@ -1422,6 +1422,10 @@ function run_build() {
     fi
 
     ensure_running "$target_disk" "$mp" || return 1
+    # Refresh the guest watchdog from this checkout before a build starts.
+    # This keeps its process detection and build-runner guard in sync with the
+    # wrapper that is about to launch.
+    run_step "Updating idle-shutdown watchdog" deploy_watchdog || return 1
 
     # On general shared disk, check if it holds data from another target and offer clean format interactively
     if [ "$FORMAT_DISK_OPT" != "true" ] && [ -t 0 ] && [ "$disk_mode" = "general" ]; then
@@ -1501,6 +1505,7 @@ if [ '$branch' = 'recovery' ] && [ '$mp' != '/mnt/recovery' ]; then
     sudo mkdir -p '$mp/recovery' && sudo ln -sfn '$mp/recovery' /mnt/recovery
 fi
 echo "BUILD_STATUS: RUNNING (\$BUILD_VARIANT) - \$(date)" > '$mp/build.status' 2>/dev/null || true
+sudo touch /run/gcp-build-active 2>/dev/null || true
 
 BUILD_SCRIPT_TMP="/tmp/gcp_build_script.sh"
 CACHE_BUST="\$(date +%s)"
@@ -1519,6 +1524,7 @@ else
 fi
 
 if [ \$BUILD_EXIT -eq 0 ]; then
+    sudo rm -f /run/gcp-build-active 2>/dev/null || true
     echo "BUILD_STATUS: SUCCESS (\$BUILD_VARIANT) - \$(date)" > '$mp/build.status' 2>/dev/null || true
     echo -e '\n\033[1;32m============================================================\033[0m'
     echo -e '\033[1;32m [SUCCESS] Build and upload completed successfully!\033[0m'
@@ -1535,11 +1541,19 @@ else
     echo -e "\033[1;31m [ERROR] Build failed with exit code \$BUILD_EXIT!\033[0m"
     echo -e '\033[1;31m============================================================\033[0m'
     echo "Full build output is saved at: $mp/build.log"
-    echo '>>> Auto-shutdown: VM will power off in 30 minutes to pause billing.'
-    echo '>>> Press Enter within 30 minutes to cancel auto-shutdown and enter bash prompt...'
-    if ! read -t 1800 -r; then
-        echo '>>> 30 minutes elapsed after build error. Powering off VM...'
-        sudo poweroff
+    if [ "\$WRAPPER_SHUTDOWN" = 'true' ]; then
+        sudo rm -f /run/gcp-build-active 2>/dev/null || true
+        echo '>>> Auto-shutdown: VM will power off in 30 minutes to pause billing.'
+        echo '>>> Press Enter within 30 minutes to cancel auto-shutdown and enter bash prompt...'
+        if ! read -t 1800 -r; then
+            echo '>>> 30 minutes elapsed after build error. Powering off VM...'
+            sudo poweroff
+        fi
+    else
+        echo '>>> Keep-alive is enabled; VM will stay up for build-log inspection.'
+        echo '>>> Press Enter when ready to enter the bash prompt...'
+        read -r
+        sudo rm -f /run/gcp-build-active 2>/dev/null || true
     fi
     exec bash
 fi
