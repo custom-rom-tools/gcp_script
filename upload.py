@@ -349,7 +349,7 @@ def upload_fallback(files: list[Path]) -> list[tuple[str, str, str]]:
 
 
 def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> None:
-    """Persist upload links to ~/.upload_links.log and GCP instance metadata (readable after VM stops)."""
+    """Persist upload links on the VM; the local build menu captures the summary."""
     if not entries:
         return
 
@@ -361,66 +361,14 @@ def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> Non
         print(f" {line}")
     print("============================")
 
-    # 1. Append to local persistent log on VM
+    # Keep a copy on the VM so the menu can also sync it over SSH while running.
     vm_log = Path.home() / ".upload_links.log"
     try:
         with vm_log.open("a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
+        print(f">>> Upload links saved to {vm_log}.")
     except Exception as e:
         print(f">>> [WARN] Failed to write {vm_log}: {e}")
-
-    # 2. Persist to GCP instance metadata so links remain accessible after VM powers off
-    try:
-        hdr = ["-H", "Metadata-Flavor: Google"]
-        name_res = subprocess.run(
-            ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/instance/name"],
-            capture_output=True, text=True, timeout=3,
-        )
-        zone_res = subprocess.run(
-            ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/instance/zone"],
-            capture_output=True, text=True, timeout=3,
-        )
-        project_res = subprocess.run(
-            ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/project/project-id"],
-            capture_output=True, text=True, timeout=3,
-        )
-        if name_res.returncode != 0 or zone_res.returncode != 0 or project_res.returncode != 0:
-            print(">>> [WARN] Could not read GCP instance identity; upload links remain in ~/.upload_links.log.")
-            return
-        inst_name = name_res.stdout.strip()
-        inst_zone = zone_res.stdout.strip().split("/")[-1]
-        project_id = project_res.stdout.strip()
-
-        existing_res = subprocess.run(
-            ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/instance/attributes/upload-links"],
-            capture_output=True, text=True, timeout=3,
-        )
-        existing_lines = [l for l in existing_res.stdout.splitlines() if l.strip()] if existing_res.returncode == 0 else []
-        merged = (existing_lines + lines)[-80:]
-
-        tmp_meta = Path("/tmp/upload_links_meta.txt")
-        tmp_meta.write_text("\n".join(merged) + "\n", encoding="utf-8")
-        try:
-            metadata_res = subprocess.run(
-                [
-                    "gcloud", "compute", "instances", "add-metadata", inst_name,
-                    f"--zone={inst_zone}",
-                    f"--project={project_id}",
-                    f"--metadata-from-file=upload-links={tmp_meta}",
-                    "--quiet",
-                ],
-                capture_output=True, text=True, timeout=20,
-            )
-            if metadata_res.returncode != 0:
-                details = (metadata_res.stderr or metadata_res.stdout).strip()
-                print(f">>> [WARN] Could not save upload links in GCP metadata: {details or 'gcloud returned an error'}")
-            else:
-                print(">>> Upload links saved to GCP instance metadata.")
-        finally:
-            tmp_meta.unlink(missing_ok=True)
-    except Exception as e:
-        print(f">>> [WARN] Failed to update GCP metadata upload-links: {e}")
-
 
 def main():
     if len(sys.argv) < 3:

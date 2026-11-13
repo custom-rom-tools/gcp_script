@@ -1582,8 +1582,15 @@ EOF_RUNNER
     FORMAT_DISK_OPT=""
     DEVICE_OPT=""
 
+    vm_scp "$SCRIPT_DIR/upload.py" "$USER@$INSTANCE:~/upload.py" || {
+        echo -e "${YELLOW}>>> [WARN] Could not refresh ~/upload.py on the VM; it may still use the older metadata writer.${NC}"
+    }
     vm_exec "printf '%s' '$runner_b64' | base64 -d > /tmp/gcp_build_runner.sh && chmod +x /tmp/gcp_build_runner.sh && tmux kill-session -t rom-build 2>/dev/null || true"
-    vm_exec_tty "tmux new-session -A -s rom-build 'bash /tmp/gcp_build_runner.sh'"
+    local build_output_tmp
+    build_output_tmp=$(mktemp /tmp/gcp_build_output.XXXXXX)
+    vm_exec_tty "tmux new-session -A -s rom-build 'bash /tmp/gcp_build_runner.sh'" | tee "$build_output_tmp"
+    cache_upload_links_from_output "$build_output_tmp"
+    rm -f "$build_output_tmp"
     sync_upload_links >/dev/null 2>&1 || true
     if [ -s "$LOCAL_LINKS_FILE" ]; then
         echo -e "\n${CYAN}>>> Saved Upload Links ($LOCAL_LINKS_FILE):${NC}"
@@ -2708,9 +2715,33 @@ function sync_upload_links() {
     rm -f "$tmp_merge"
 }
 
+function cache_upload_links_from_output() {
+    local output_file="$1"
+    [ -s "$output_file" ] || return 0
+
+    python3 - "$output_file" "$LOCAL_LINKS_FILE" <<'PY_LINKS'
+import re
+import sys
+from pathlib import Path
+
+source, destination = map(Path, sys.argv[1:])
+ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+pattern = re.compile(r"^\[[^\]]+\]\s+\[[^\]]+\]\s+\[[^\]]+\]\s+.+\s->\shttps?://\S+")
+lines = destination.read_text(encoding="utf-8", errors="replace").splitlines() if destination.exists() else []
+seen = set(lines)
+for raw in source.read_text(encoding="utf-8", errors="replace").splitlines():
+    line = ansi.sub("", raw).strip()
+    if pattern.match(line) and line not in seen:
+        lines.append(line)
+        seen.add(line)
+destination.parent.mkdir(parents=True, exist_ok=True)
+destination.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+PY_LINKS
+}
+
 function view_upload_links() {
     echo ""
-    run_step "Syncing upload links (GCP metadata + local cache)" sync_upload_links
+    run_step "Syncing upload links (local cache + VM log)" sync_upload_links
     clear 2>/dev/null || true
     echo -e "${CYAN}=================================================================${NC}"
     echo -e "${BOLD}           UPLOAD LINKS HISTORY (Gofile / SF / Filebin)          ${NC}"
