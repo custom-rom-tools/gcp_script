@@ -104,7 +104,6 @@ export LC_ALL="C.UTF-8"
 # when no legacy lunch alias matches; keep errexit from aborting setup.
 set +e
 source build/envsetup.sh
-set -e
 export USE_CCACHE=0
 export CCACHE_DISABLE=1
 unset CCACHE_EXEC CCACHE_DIR
@@ -113,6 +112,7 @@ if [ -f "device/realme/${DEVICE}/vendorsetup.sh" ]; then
 elif [ -f "device/realme/sm7125/vendorsetup.sh" ]; then
     source "device/realme/sm7125/vendorsetup.sh"
 fi
+set -e
 
 if [ "${DEVICE,,}" = "all" ]; then
     TARGET_DEVICES=("RMX2170" "RMX2061" "RMX3081")
