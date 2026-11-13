@@ -1656,12 +1656,8 @@ EOF_RUNNER
     else
         echo -e "${YELLOW}>>> [WARN] Local upload.py not found at $upload_script; build will continue with the existing VM uploader.${NC}"
     fi
-    if ! vm_exec "printf '%s' '$runner_b64' | base64 -d > /tmp/gcp_build_runner.sh && chmod +x /tmp/gcp_build_runner.sh"; then
-        echo -e "${RED}[ERROR] Could not transfer the build runner to the VM; no build was started.${NC}"
-        return 1
-    fi
-    if ! vm_exec "active=\$(ps -eo args= | grep -E '[g]cp_build_runner[.]sh|[g]cp_build_script[.]sh|[s]oong_ui .*--build-mode|[/]build/soong/bin/m .*(recoveryimage|otapackage|bacon|droid)|[r]epo sync' || true); if [ -n \"\$active\" ]; then echo 'An Android build became active before launch; refusing to replace it.' >&2; echo \"\$active\"; exit 1; fi; tmux kill-session -t rom-build 2>/dev/null || true; tmux new-session -d -s rom-build 'bash /tmp/gcp_build_runner.sh'"; then
-        echo -e "${RED}[ERROR] Could not create the remote tmux build session. The build was not started.${NC}"
+    if ! vm_exec "if pgrep -x soong_ui >/dev/null 2>&1 || pgrep -x ninja >/dev/null 2>&1 || pgrep -f '^bash /tmp/gcp_build_runner[.]sh$' >/dev/null 2>&1 || pgrep -f '^bash /tmp/gcp_build_script[.]sh$' >/dev/null 2>&1; then echo 'An Android build became active before launch; refusing to replace it.' >&2; exit 1; fi; printf '%s' '$runner_b64' | base64 -d > /tmp/gcp_build_runner.sh && chmod +x /tmp/gcp_build_runner.sh && { tmux kill-session -t rom-build 2>/dev/null || true; } && tmux new-session -d -s rom-build 'bash /tmp/gcp_build_runner.sh'"; then
+        echo -e "${RED}[ERROR] Could not create the remote tmux build session. The build was not started; check the error above and the VM build status.${NC}"
         return 1
     fi
     sync_upload_links >/dev/null 2>&1 || true
