@@ -1669,6 +1669,39 @@ function attach_tmux_session() {
 tmux attach-session -t rom-build || tmux ls"
 }
 
+# Realtime build-log follower. `less +G` only jumps to the end once, so a build
+# that is still writing looked frozen until a keypress. `tail -f` plus
+# line-buffered filters keeps the screen updating as ninja emits output.
+function follow_build_log_live() {
+    local log="$1"
+    local lines="${2:-400}"
+    if [ -z "$log" ]; then
+        echo -e " ${YELLOW}No log file found.${NC}"
+        return 1
+    fi
+    echo -e "${CYAN}>>> Following ${log} in realtime (last ${lines} lines, Ctrl+C to stop)${NC}\n"
+    vm_exec_tty "LOG='$log'
+if [ ! -f \"\$LOG\" ]; then echo \"No log file found: \$LOG\"; exit 1; fi
+stdbuf -oL tail -n $lines -f -- \"\$LOG\" 2>/dev/null \
+  | stdbuf -oL tr '\\r' '\\n' \
+  | stdbuf -oL sed -u -E 's/\x1b\\[[0-9;?]*[A-Za-z]//g' \
+  | grep --line-buffered -v '^\$'"
+    local rc=$?
+    restore_local_terminal
+    return $rc
+}
+
+# Static snapshot for idle builds: full log, opens at the end, scrollable.
+function view_build_log_snapshot() {
+    local log="$1"
+    if [ -z "$log" ]; then
+        echo -e " ${YELLOW}No log file found.${NC}"
+        return 1
+    fi
+    vm_exec_tty "if [ -f '$log' ]; then tr '\r' '\n' < '$log' | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | less -R --mouse +G; else echo 'No log file found.'; fi"
+    restore_local_terminal
+}
+
 function view_build_logs() {
     while true; do
         clear_screen
@@ -1860,7 +1893,17 @@ echo "===LOG_END==="
         echo -e "${YELLOW}-----------------------------------------------------------------${NC}"
 
         echo ""
-        echo -e " ${BOLD}1)${NC} View Full Build Log (less)"
+        # Live follow only makes sense while a build is actually writing.
+        # Everything else keeps the scrollable full-log pager.
+        local b_active=0
+        if [ "${b_procs:-0}" -gt 0 ] 2>/dev/null || [[ "$b_status" == *"RUNNING"* ]]; then
+            b_active=1
+        fi
+        if [ "$b_active" -eq 1 ]; then
+            echo -e " ${BOLD}1)${NC} ${GREEN}Follow Live Build Log${NC} (realtime updates, Ctrl+C to stop)"
+        else
+            echo -e " ${BOLD}1)${NC} View Full Build Log (less)"
+        fi
         echo -e " ${BOLD}2)${NC} ${CYAN}Download Build Log (.log) to Downloads${NC}"
         echo -e " ${BOLD}3)${NC} ${YELLOW}Scan Log for Errors (grep FAILED with context)${NC}"
         echo -e " ${BOLD}4)${NC} ${RED}Stop Active Build${NC}"
@@ -1869,8 +1912,11 @@ echo "===LOG_END==="
         read -rp "Select option [0-4]: " log_choice
         case "$log_choice" in
             1)
-                # +G opens less at the end; the log grows while the build runs.
-                vm_exec_tty "if [ -f '$b_log' ]; then tr '\r' '\n' < '$b_log' | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | less -R --mouse +G; else echo 'No log file found.'; fi"
+                if [ "$b_active" -eq 1 ]; then
+                    follow_build_log_live "$b_log" 400
+                else
+                    view_build_log_snapshot "$b_log"
+                fi
                 ;;
             2)
                 download_artifacts "log" "$b_log"
