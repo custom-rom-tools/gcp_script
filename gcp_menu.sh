@@ -1378,10 +1378,74 @@ function prompt_options() {
     fi
 }
 
+function check_build_slot() {
+    local state vm_state remote_result
+    state=$(get_vm_state 2>/dev/null)
+    vm_state="${state%%,*}"
+
+    case "$vm_state" in
+        RUNNING) ;;
+        TERMINATED|STOPPED|SUSPENDED) return 0 ;;
+        *)
+            echo -e "${RED}[ERROR] Could not verify the GCP VM state ('$vm_state'); refusing to start another build.${NC}"
+            echo -e "       Check the VM with: ./gcp_menu.sh status"
+            return 1
+            ;;
+    esac
+
+    remote_result=$(vm_exec '
+active=$(ps -eo pid=,etime=,args= | grep -E "[g]cp_build_runner[.]sh|[g]cp_build_script[.]sh|[s]oong_ui .*--build-mode|[/]build/soong/bin/m .*(recoveryimage|otapackage|bacon|droid)|[r]epo sync" || true)
+if [ -n "$active" ]; then
+    echo BUILD_ALREADY_RUNNING
+    echo "$active"
+    for f in /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status; do
+        [ -f "$f" ] && echo "$f: $(cat "$f")"
+    done
+else
+    echo BUILD_SLOT_FREE
+fi
+' 2>&1)
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}[ERROR] Could not check whether a build is already running. Refusing to replace the VM build session.${NC}"
+        [ -n "$remote_result" ] && echo "$remote_result"
+        return 1
+    fi
+
+    if [[ "$remote_result" == *BUILD_ALREADY_RUNNING* ]]; then
+        echo -e "${RED}[ERROR] A build is already running on the GCP VM. The new build was not started, and the running session was left untouched.${NC}"
+        echo "$remote_result" | sed '/^BUILD_ALREADY_RUNNING$/d'
+        echo -e "       View it with: ./gcp_menu.sh logs"
+        return 1
+    fi
+
+    if [[ "$remote_result" != *BUILD_SLOT_FREE* ]]; then
+        echo -e "${RED}[ERROR] The VM did not confirm that the build slot is free. Refusing to start.${NC}"
+        [ -n "$remote_result" ] && echo "$remote_result"
+        return 1
+    fi
+    return 0
+}
+
+function run_build_with_feedback() {
+    run_build "$@"
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo -e "${RED}[ERROR] Build request was not started. Review the message above, then check VM status or build logs before retrying.${NC}"
+        if [ -t 0 ]; then
+            read -rp "Press Enter to return to the menu..."
+        fi
+    fi
+    return "$rc"
+}
+
 function run_build() {
     local branch="$1"
     local script_name="$2"
     local title="$3"
+
+    # Check before disk formatting, VM setup, or replacing the shared tmux
+    # session so a second request cannot disturb an active build.
+    check_build_slot || return 1
 
     local build_cat="rom"
     [ "$branch" = "recovery" ] && build_cat="recovery"
@@ -1592,8 +1656,14 @@ EOF_RUNNER
     else
         echo -e "${YELLOW}>>> [WARN] Local upload.py not found at $upload_script; build will continue with the existing VM uploader.${NC}"
     fi
-    vm_exec "printf '%s' '$runner_b64' | base64 -d > /tmp/gcp_build_runner.sh && chmod +x /tmp/gcp_build_runner.sh && tmux kill-session -t rom-build 2>/dev/null || true"
-    vm_exec "tmux new-session -d -s rom-build 'bash /tmp/gcp_build_runner.sh'"
+    if ! vm_exec "printf '%s' '$runner_b64' | base64 -d > /tmp/gcp_build_runner.sh && chmod +x /tmp/gcp_build_runner.sh"; then
+        echo -e "${RED}[ERROR] Could not transfer the build runner to the VM; no build was started.${NC}"
+        return 1
+    fi
+    if ! vm_exec "active=\$(ps -eo args= | grep -E '[g]cp_build_runner[.]sh|[g]cp_build_script[.]sh|[s]oong_ui .*--build-mode|[/]build/soong/bin/m .*(recoveryimage|otapackage|bacon|droid)|[r]epo sync' || true); if [ -n \"\$active\" ]; then echo 'An Android build became active before launch; refusing to replace it.' >&2; echo \"\$active\"; exit 1; fi; tmux kill-session -t rom-build 2>/dev/null || true; tmux new-session -d -s rom-build 'bash /tmp/gcp_build_runner.sh'"; then
+        echo -e "${RED}[ERROR] Could not create the remote tmux build session. The build was not started.${NC}"
+        return 1
+    fi
     sync_upload_links >/dev/null 2>&1 || true
     if [ -s "$LOCAL_LINKS_FILE" ]; then
         echo -e "\n${CYAN}>>> Saved Upload Links ($LOCAL_LINKS_FILE):${NC}"
@@ -2890,9 +2960,9 @@ case "$1" in
         [ "$ROM_LOWER" = "evox" ] && ROM_LOWER="evolution"
         DEV_LOWER=$(echo "$DEV" | tr '[:upper:]' '[:lower:]')
         if [ "$DEV_LOWER" = "all" ]; then
-            run_build "aosp-${VER}" "${ROM_LOWER}_all.sh" "$ROM (A${VER}) - All Devices"
+            run_build_with_feedback "aosp-${VER}" "${ROM_LOWER}_all.sh" "$ROM (A${VER}) - All Devices" || exit 1
         else
-            run_build "aosp-${VER}" "${ROM_LOWER}_${DEV_LOWER}.sh" "$ROM (A${VER}) - $DEV"
+            run_build_with_feedback "aosp-${VER}" "${ROM_LOWER}_${DEV_LOWER}.sh" "$ROM (A${VER}) - $DEV" || exit 1
         fi
         exit 0
         ;;
@@ -2922,11 +2992,11 @@ case "$1" in
         SF_OPT="$SF"; GOFILE_OPT="$GOFILE"; SHUT_OPT="$SHUT"
         DEVICE_OPT="$DEV"
         if [ "$FLAVOR" = "twrp" ]; then
-            run_build "recovery" "twrp_sm7125.sh" "TWRP Recovery ($DEV)"
+            run_build_with_feedback "recovery" "twrp_sm7125.sh" "TWRP Recovery ($DEV)" || exit 1
         elif [ "$FLAVOR" = "all" ]; then
-            run_build "recovery" "recovery_all.sh" "All Recoveries Batch"
+            run_build_with_feedback "recovery" "recovery_all.sh" "All Recoveries Batch" || exit 1
         else
-            run_build "recovery" "ofrp_sm7125.sh" "OrangeFox Recovery ($DEV)"
+            run_build_with_feedback "recovery" "ofrp_sm7125.sh" "OrangeFox Recovery ($DEV)" || exit 1
         fi
         exit 0
         ;;
@@ -3036,10 +3106,10 @@ function menu_select_rom_device() {
         read -rp " Select device [0-4]: " dev_choice
 
         case "$dev_choice" in
-            1) run_build "$branch" "${rom_prefix}_rmx2170.sh" "${rom_label} - Realme 7 Pro (RMX2170)"; return ;;
-            2) run_build "$branch" "${rom_prefix}_rmx2061.sh" "${rom_label} - Realme 6 Pro (RMX2061)"; return ;;
-            3) run_build "$branch" "${rom_prefix}_rmx3081.sh" "${rom_label} - Realme 8 Pro (RMX3081)"; return ;;
-            4) run_build "$branch" "${rom_prefix}_all.sh"     "${rom_label} - All Devices Batch"; return ;;
+            1) run_build_with_feedback "$branch" "${rom_prefix}_rmx2170.sh" "${rom_label} - Realme 7 Pro (RMX2170)"; return ;;
+            2) run_build_with_feedback "$branch" "${rom_prefix}_rmx2061.sh" "${rom_label} - Realme 6 Pro (RMX2061)"; return ;;
+            3) run_build_with_feedback "$branch" "${rom_prefix}_rmx3081.sh" "${rom_label} - Realme 8 Pro (RMX3081)"; return ;;
+            4) run_build_with_feedback "$branch" "${rom_prefix}_all.sh"     "${rom_label} - All Devices Batch"; return ;;
             0|q|Q) return ;;
             *) echo -e "${RED}Invalid choice.${NC}"; sleep 1 ;;
         esac
@@ -3067,11 +3137,11 @@ function menu_select_recovery_device() {
         read -rp " Select target [0-5]: " dev_choice
 
         case "$dev_choice" in
-            1) DEVICE_OPT="sm7125";  run_build "recovery" "$script_name" "${rec_label} (sm7125 Unified)"; return ;;
-            2) DEVICE_OPT="RMX2170"; run_build "recovery" "$script_name" "${rec_label} - Realme 7 Pro (RMX2170)"; return ;;
-            3) DEVICE_OPT="RMX2061"; run_build "recovery" "$script_name" "${rec_label} - Realme 6 Pro (RMX2061)"; return ;;
-            4) DEVICE_OPT="RMX3081"; run_build "recovery" "$script_name" "${rec_label} - Realme 8 Pro (RMX3081)"; return ;;
-            5) DEVICE_OPT="all";     run_build "recovery" "$script_name" "${rec_label} - All Devices Batch"; return ;;
+            1) DEVICE_OPT="sm7125";  run_build_with_feedback "recovery" "$script_name" "${rec_label} (sm7125 Unified)"; return ;;
+            2) DEVICE_OPT="RMX2170"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 7 Pro (RMX2170)"; return ;;
+            3) DEVICE_OPT="RMX2061"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 6 Pro (RMX2061)"; return ;;
+            4) DEVICE_OPT="RMX3081"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 8 Pro (RMX3081)"; return ;;
+            5) DEVICE_OPT="all";     run_build_with_feedback "recovery" "$script_name" "${rec_label} - All Devices Batch"; return ;;
             0|q|Q) return ;;
             *) echo -e "${RED}Invalid choice.${NC}"; sleep 1 ;;
         esac
