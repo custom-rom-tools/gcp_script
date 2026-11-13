@@ -1476,7 +1476,11 @@ echo \"PREV=\$PREV|USED=\$USED|DIRS=\$DIRS\"
 export BUILD_VARIANT='$BUILD_TYPE_OPT'
 export SF_UPLOAD='$SF_OPT'
 export SKIP_GOFILE='$([ "$GOFILE_OPT" = "false" ] && echo "true" || echo "false")'
-export AUTO_SHUTDOWN='$SHUT_OPT'
+# The device build scripts also honor AUTO_SHUTDOWN.  Keep them from
+# powering off mid-run: the wrapper must write build.status, print the
+# result and only then shut the VM down.
+export AUTO_SHUTDOWN=false
+export WRAPPER_SHUTDOWN='$SHUT_OPT'
 $( [ -n "${DEVICE_OPT:-}" ] && echo "export DEVICE='$DEVICE_OPT'" )
 $net_speed_setup
 # Keep ccache from filling the boot disk again: a full / breaks cloud-init
@@ -1517,7 +1521,7 @@ if [ \$BUILD_EXIT -eq 0 ]; then
     echo -e '\n\033[1;32m============================================================\033[0m'
     echo -e '\033[1;32m [SUCCESS] Build and upload completed successfully!\033[0m'
     echo -e '\033[1;32m============================================================\033[0m'
-    if [ "\$AUTO_SHUTDOWN" = 'true' ]; then
+    if [ "\$WRAPPER_SHUTDOWN" = 'true' ]; then
         echo '>>> Auto-shutdown: VM will power off in 30 seconds to pause billing.'
         echo '>>> Press Ctrl+C now to cancel shutdown and keep VM running.'
         sleep 30
