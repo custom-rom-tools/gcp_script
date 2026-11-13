@@ -1363,7 +1363,7 @@ function prompt_options() {
 
     if [ -z "$SHUT_OPT" ]; then
         if [ -t 0 ]; then
-            read -rp " Auto power off VM when finished? (Y/n): " auto_in
+            read -rp " Power off immediately when build ends? (Y/n; n = 30m idle timeout): " auto_in
             if [[ "$auto_in" =~ ^[Nn]$ ]]; then
                 SHUT_OPT="false"
             else
@@ -1416,7 +1416,11 @@ function run_build() {
     echo -e " Script URL          : $script_url"
     echo -e " SourceForge Upload  : $SF_OPT"
     echo -e " Gofile.io Upload    : $GOFILE_OPT"
-    echo -e " Auto-Shutdown VM    : $SHUT_OPT"
+    if [ "$SHUT_OPT" = "true" ]; then
+        echo -e " Shutdown Behavior   : Immediate after build"
+    else
+        echo -e " Shutdown Behavior   : After 30m without build activity"
+    fi
     [ "$FORMAT_DISK_OPT" = "true" ] && echo -e " Format Disk First   : ${RED}true (--format)${NC}"
     echo -e "${CYAN}============================================================${NC}"
 
@@ -1502,13 +1506,14 @@ if [ -n "\$BOOT_AVAIL_MB" ] && [ "\$BOOT_AVAIL_MB" -lt 3072 ] 2>/dev/null; then
 fi
 tmux set-option -t rom-build @build_label '$build_label' 2>/dev/null || true
 tmux rename-window '$win_label' 2>/dev/null || true
+sudo touch /run/gcp-build-active 2>/dev/null || true
+sudo rm -f /run/gcp-build-shutdown-pending 2>/dev/null || true
 sudo mkdir -p '$mp'
 echo '$branch' > '$mp/.gcp_build_target' 2>/dev/null || true
 if [ '$branch' = 'recovery' ] && [ '$mp' != '/mnt/recovery' ]; then
     sudo mkdir -p '$mp/recovery' && sudo ln -sfn '$mp/recovery' /mnt/recovery
 fi
 echo "BUILD_STATUS: RUNNING (\$BUILD_VARIANT) - \$(date)" > '$mp/build.status' 2>/dev/null || true
-sudo touch /run/gcp-build-active 2>/dev/null || true
 
 BUILD_SCRIPT_TMP="/tmp/gcp_build_script.sh"
 CACHE_BUST="\$(date +%s)"
@@ -1533,10 +1538,12 @@ if [ \$BUILD_EXIT -eq 0 ]; then
     echo -e '\033[1;32m [SUCCESS] Build and upload completed successfully!\033[0m'
     echo -e '\033[1;32m============================================================\033[0m'
     if [ "\$WRAPPER_SHUTDOWN" = 'true' ]; then
-        echo '>>> Auto-shutdown: VM will power off in 30 seconds to pause billing.'
-        echo '>>> Press Ctrl+C now to cancel shutdown and keep VM running.'
-        sleep 30
-        sudo poweroff
+        echo '>>> Auto-shutdown: powering off now.'
+        sudo poweroff || true
+        exit 0
+    else
+        echo "\$(date +%s)" | sudo tee /run/gcp-build-shutdown-pending >/dev/null 2>&1 || true
+        echo '>>> Delayed shutdown armed: powering off after 30 minutes without build activity.'
     fi
 else
     echo "BUILD_STATUS: FAILED (Exit Code \$BUILD_EXIT) - \$(date)" > '$mp/build.status' 2>/dev/null || true
@@ -1544,19 +1551,17 @@ else
     echo -e "\033[1;31m [ERROR] Build failed with exit code \$BUILD_EXIT!\033[0m"
     echo -e '\033[1;31m============================================================\033[0m'
     echo "Full build output is saved at: $mp/build.log"
+    # The build has ended; let the idle watchdog start its 30-minute timer.
+    sudo rm -f /run/gcp-build-active 2>/dev/null || true
     if [ "\$WRAPPER_SHUTDOWN" = 'true' ]; then
-        sudo rm -f /run/gcp-build-active 2>/dev/null || true
-        echo '>>> Auto-shutdown: VM will power off in 30 minutes to pause billing.'
-        echo '>>> Press Enter within 30 minutes to cancel auto-shutdown and enter bash prompt...'
-        if ! read -t 1800 -r; then
-            echo '>>> 30 minutes elapsed after build error. Powering off VM...'
-            sudo poweroff
-        fi
+        echo '>>> Auto-shutdown: powering off now.'
+        sudo poweroff || true
+        exit 0
     else
-        echo '>>> Keep-alive is enabled; VM will stay up for build-log inspection.'
-        echo '>>> Press Enter when ready to enter the bash prompt...'
+        echo "\$(date +%s)" | sudo tee /run/gcp-build-shutdown-pending >/dev/null 2>&1 || true
+        echo '>>> Auto-shutdown is disabled; the idle watchdog will power off after 30 minutes without build activity.'
+        echo '>>> Press Enter to enter the bash prompt...'
         read -r
-        sudo rm -f /run/gcp-build-active 2>/dev/null || true
     fi
     exec bash
 fi
@@ -2679,14 +2684,21 @@ function sync_upload_links() {
     tmp_merge=$(mktemp /tmp/gcp_links.XXXXXX)
     [ -f "$LOCAL_LINKS_FILE" ] && cat "$LOCAL_LINKS_FILE" > "$tmp_merge"
 
-    # Pull from GCP instance metadata (works even when VM is STOPPED)
-    gcloud compute instances describe "$INSTANCE" --zone="$ZONE" --project="$PROJECT" \
-        --format="value(metadata.items.filter(key:upload-links).value)" 2>/dev/null >> "$tmp_merge" || true
+    # Pull from GCP instance metadata (works even when VM is STOPPED).
+    # Parse JSON locally because gcloud's value() projection can silently emit
+    # an empty result for metadata map entries on some SDK versions.
+    local metadata_json
+    metadata_json=$(gcloud compute instances describe "$INSTANCE" --zone="$ZONE" --project="$PROJECT" \
+        --format=json 2>/dev/null || true)
+    if [ -n "$metadata_json" ]; then
+        printf '%s' "$metadata_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((x.get("value","") for x in d.get("metadata",{}).get("items",[]) if x.get("key")=="upload-links"), ""))' \
+            2>/dev/null >> "$tmp_merge" || true
+    fi
 
     # If VM is running, also pull ~/.upload_links.log directly
-    local st
-    st=$(get_vm_status 2>/dev/null || echo "UNKNOWN")
-    if [ "$st" = "RUNNING" ]; then
+    local vm_state
+    vm_state=$(get_vm_state 2>/dev/null || echo "UNKNOWN,")
+    if [ "${vm_state%%,*}" = "RUNNING" ]; then
         vm_exec "cat ~/.upload_links.log 2>/dev/null || true" 2>/dev/null >> "$tmp_merge" || true
     fi
 
@@ -2828,6 +2840,11 @@ case "$1" in
                 --sf) SF="true"; shift ;;
                 --gofile) GOFILE="true"; shift ;;
                 --no-gofile) GOFILE="false"; shift ;;
+                --shutdown)
+                    if [[ "${2:-}" =~ ^(true|false)$ ]]; then SHUT="$2"; shift 2; else SHUT="true"; shift; fi
+                    ;;
+                --shutdown=true) SHUT="true"; shift ;;
+                --shutdown=false) SHUT="false"; shift ;;
                 --keep-alive) SHUT="false"; shift ;;
                 --format) FORMAT_DISK_OPT="true"; shift ;;
                 *) shift ;;
@@ -2857,6 +2874,11 @@ case "$1" in
                 --sf) SF="true"; shift ;;
                 --gofile) GOFILE="true"; shift ;;
                 --no-gofile) GOFILE="false"; shift ;;
+                --shutdown)
+                    if [[ "${2:-}" =~ ^(true|false)$ ]]; then SHUT="$2"; shift 2; else SHUT="true"; shift; fi
+                    ;;
+                --shutdown=true) SHUT="true"; shift ;;
+                --shutdown=false) SHUT="false"; shift ;;
                 --keep-alive) SHUT="false"; shift ;;
                 --format) FORMAT_DISK_OPT="true"; shift ;;
                 *) shift ;;

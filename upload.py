@@ -380,10 +380,16 @@ def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> Non
             ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/instance/zone"],
             capture_output=True, text=True, timeout=3,
         )
-        if name_res.returncode != 0 or zone_res.returncode != 0:
+        project_res = subprocess.run(
+            ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/project/project-id"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if name_res.returncode != 0 or zone_res.returncode != 0 or project_res.returncode != 0:
+            print(">>> [WARN] Could not read GCP instance identity; upload links remain in ~/.upload_links.log.")
             return
         inst_name = name_res.stdout.strip()
         inst_zone = zone_res.stdout.strip().split("/")[-1]
+        project_id = project_res.stdout.strip()
 
         existing_res = subprocess.run(
             ["curl", "-sf", *hdr, "http://metadata.google.internal/computeMetadata/v1/instance/attributes/upload-links"],
@@ -395,15 +401,21 @@ def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> Non
         tmp_meta = Path("/tmp/upload_links_meta.txt")
         tmp_meta.write_text("\n".join(merged) + "\n", encoding="utf-8")
         try:
-            subprocess.run(
+            metadata_res = subprocess.run(
                 [
                     "gcloud", "compute", "instances", "add-metadata", inst_name,
                     f"--zone={inst_zone}",
+                    f"--project={project_id}",
                     f"--metadata-from-file=upload-links={tmp_meta}",
                     "--quiet",
                 ],
                 capture_output=True, text=True, timeout=20,
             )
+            if metadata_res.returncode != 0:
+                details = (metadata_res.stderr or metadata_res.stdout).strip()
+                print(f">>> [WARN] Could not save upload links in GCP metadata: {details or 'gcloud returned an error'}")
+            else:
+                print(">>> Upload links saved to GCP instance metadata.")
         finally:
             tmp_meta.unlink(missing_ok=True)
     except Exception as e:

@@ -141,7 +141,8 @@ Custom ROM compilation (AOSP, Kernel, Clang/LLVM, Soong, Ninja) is heavily CPU-b
    * **Runaway Billing Protection**: Completely eliminates unexpected compute charges (~$0.726/hr) if a build finishes, crashes, fails, or if an SSH session drops.
    * Monitor status in real-time via **Option 18 (Check Build Status & Error Logs)** or **Option 28 (Setup & Tools) -> Option 3**.
 2. **Post-Build Auto-Shutdown**:
-   * When builds are invoked with auto-shutdown enabled, the VM powers off 30 seconds after successful upload.
+   * `--shutdown` (or `--shutdown true`) powers off as soon as the build ends, whether it succeeds or fails.
+   * `--shutdown false` (also `--keep-alive`) arms a 30-minute build-idle shutdown. Any newly started build resets the timer, including when an SSH session remains open.
 3. **ROM Disk Management**:
    * Storage is billed while disks exist in GCP (~$1.65/day for 500 GB).
    * Use **Option 24 (Disk Manager)** -> **Detach & DELETE Disk** to remove the disk when you are done.

@@ -43,6 +43,7 @@ STATUS_FILE="/run/idle_watchdog.status"
 LOG_TAG="idle-watchdog"
 
 idle_count=0
+last_pending_id=""
 
 log_msg() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -60,6 +61,10 @@ is_busy() {
     if [ "$build_procs" -gt 0 ]; then
         echo "BUILD_ACTIVE ($build_procs build processes running)"
         return 0
+    fi
+
+    if [ -e /run/gcp-build-shutdown-pending ]; then
+        return 1
     fi
 
     local active_ssh_sockets
@@ -98,6 +103,13 @@ echo "INIT: Watchdog started (threshold: ${IDLE_THRESHOLD_MINUTES}m)" > "$STATUS
 
 while true; do
     sleep "$CHECK_INTERVAL_SECONDS"
+
+    pending_id=$(cat /run/gcp-build-shutdown-pending 2>/dev/null || true)
+    if [ -n "$pending_id" ] && [ "$pending_id" != "$last_pending_id" ]; then
+        idle_count=0
+        log_msg "Delayed shutdown requested; starting a fresh 30-minute build-idle timer."
+    fi
+    last_pending_id="$pending_id"
 
     busy_reason=$(is_busy)
     if [ -n "$busy_reason" ]; then
