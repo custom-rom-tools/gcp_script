@@ -653,7 +653,7 @@ function detach_and_delete_disk() {
     echo -e " 3. ${RED}PERMANENTLY DELETE $target_disk from GCP.${NC}"
     echo -e " 4. ${GREEN}Completely eliminate all storage billing for this disk.${NC}"
     echo ""
-    echo -e "${BOLD}Note:${NC} Your 30GB boot disk (OS, packages, ccache, SF keys) is completely preserved."
+    echo -e "${BOLD}Note:${NC} Your 50GB boot disk (OS, packages, ccache, SF keys) is completely preserved."
     echo -e "You can recreate and auto-link a fresh ROM disk anytime with 1 click."
     echo ""
     read -rp "Type 'DELETE' to confirm deletion of $target_disk: " confirm_del
@@ -762,7 +762,7 @@ function format_disk_action() {
         echo -e " 2. ${RED}PERMANENTLY ERASE ALL source trees, out/ artifacts, and files on $target_disk.${NC}"
         echo -e " 3. Create a fresh clean ext4 filesystem ready for your next ROM or Recovery build."
         echo ""
-        echo -e "${BOLD}Note:${NC} Your 30GB boot disk (OS, packages, ccache, SF keys) is NOT affected."
+        echo -e "${BOLD}Note:${NC} Your 50GB boot disk (OS, packages, ccache, SF keys) is NOT affected."
         echo ""
         read -rp "Type 'FORMAT' to confirm formatting $target_disk: " confirm_fmt
         if [ "$confirm_fmt" != "FORMAT" ]; then
@@ -851,20 +851,109 @@ function ensure_disk_attached() {
     fi
 }
 
+function diagnose_ssh_failure() {
+    local elapsed="$1"
+    local state st ip
+    state=$(get_vm_state)
+    st="${state%%,*}"
+    ip="${state##*,}"
+
+    echo ""
+    echo -e "${RED}=================================================================${NC}"
+    echo -e "${RED}>>> SSH did not become ready after ${elapsed}s${NC}"
+    echo -e "    Instance state : ${BOLD}${st:-UNKNOWN}${NC}"
+    echo -e "    Instance IP    : ${BOLD}${ip:-(none)}${NC}"
+
+    if [ "$st" != "RUNNING" ]; then
+        echo -e "${YELLOW}    The VM is not RUNNING, so sshd cannot accept connections.${NC}"
+        echo -e "${RED}=================================================================${NC}"
+        return 1
+    fi
+
+    if [ -z "$ip" ]; then
+        echo -e "${YELLOW}    The VM has no external IP yet. Wait a few seconds and retry.${NC}"
+        echo -e "${RED}=================================================================${NC}"
+        return 1
+    fi
+
+    if ! check_ssh_port "$ip"; then
+        echo -e "    TCP port 22    : ${RED}closed${NC}"
+        echo -e "${YELLOW}    sshd is not listening yet (still booting) or port 22 is blocked.${NC}"
+        echo "    Inspect the boot log:"
+        echo "      gcloud compute instances get-serial-port-output $INSTANCE --zone=$ZONE --project=$PROJECT | tail -40"
+        echo -e "${RED}=================================================================${NC}"
+        return 1
+    fi
+
+    local ssh_err ssh_rc
+    ssh_err=$(ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+        -i "$HOME/.ssh/google_compute_engine" "$USER@$ip" "true" 2>&1)
+    ssh_rc=$?
+    echo -e "    TCP port 22    : ${GREEN}open${NC}"
+    echo -e "    SSH result     : ${ssh_err:-unknown} (exit $ssh_rc)"
+
+    if [[ "$ssh_err" == *"Permission denied"* ]]; then
+        echo -e "${RED}    The guest rejected the SSH key.${NC}"
+        echo -e "${YELLOW}    Most common cause: the boot disk is 100% full, so cloud-init cannot${NC}"
+        echo -e "${YELLOW}    write ~/.ssh/authorized_keys (the metadata script fails too).${NC}"
+        if command -v timeout >/dev/null 2>&1; then
+            local serial
+            serial=$(timeout 20 gcloud compute instances get-serial-port-output "$INSTANCE" \
+                --zone="$ZONE" --project="$PROJECT" 2>/dev/null | tail -n 150 || true)
+            if grep -qi "No space left on device" <<<"$serial"; then
+                echo -e "${RED}    CONFIRMED from the serial console: 'No space left on device'.${NC}"
+                echo -e "${YELLOW}    Free boot-disk space (ccache/logs) or grow the boot disk, then retry.${NC}"
+            fi
+        fi
+    fi
+    echo -e "${RED}=================================================================${NC}"
+    return 1
+}
+
 function wait_for_ssh() {
-    echo -e "${YELLOW}>>> Waiting for SSH service to become ready...${NC}"
+    local timeout="${1:-180}"
+    local start now elapsed state st ip
+    echo -e "${YELLOW}>>> Waiting for SSH service to become ready (up to ${timeout}s)...${NC}"
     rm -f "$VM_IP_CACHE" 2>/dev/null || true
-    # A cold boot on this image needs ~20-60s before sshd accepts connections.
-    for i in {1..60}; do
-        if is_vm_running && vm_exec "true" >/dev/null 2>&1; then
-            echo -e "${GREEN}>>> SSH connection established!${NC}"
+    # A cold boot on this image needs ~20-60s before sshd accepts connections,
+    # but a full boot disk or missing key makes it fail forever.  Bound the
+    # wait and explain the failure instead of hanging the menu.
+    start=$(date +%s)
+    while :; do
+        now=$(date +%s)
+        elapsed=$((now - start))
+        state=$(get_vm_state)
+        st="${state%%,*}"
+        ip="${state##*,}"
+
+        if [ "$st" = "RUNNING" ] && [ -n "$ip" ] && vm_exec "true" >/dev/null 2>&1; then
+            echo -e "${GREEN}>>> SSH connection established (${elapsed}s).${NC}"
             # Ensure Auto-Idle Watchdog is active on boot
             vm_exec "sudo systemctl is-active --quiet idle-shutdown.service || (sudo systemctl daemon-reload && sudo systemctl enable --now idle-shutdown.service && sudo systemctl restart idle-shutdown.service) 2>/dev/null || true" >/dev/null 2>&1 &
+
+            # The boot disk holds the OS, apt cache and ccache.  If it fills up,
+            # the next boot cannot inject SSH keys.  Warn while SSH still works.
+            local avail_mb
+            avail_mb=$(vm_exec "df -Pm / | awk 'NR==2{print \$4}'" 2>/dev/null | tr -dc '0-9')
+            if [ -n "$avail_mb" ] && [ "$avail_mb" -lt 4096 ] 2>/dev/null; then
+                echo -e "${RED}>>> WARNING: only ${avail_mb}MB free on the VM boot disk.${NC}"
+                echo -e "${YELLOW}    Run 'ccache -C' or grow the boot disk before building.${NC}"
+            fi
             return 0
         fi
+
+        if [ "$elapsed" -ge "$timeout" ]; then
+            break
+        fi
+
+        local port_state="waiting"
+        [ -n "$ip" ] && check_ssh_port "$ip" && port_state="open"
+        printf "\r\033[K    ... %3ss  VM:%-10s  SSH:%s" "$elapsed" "${st:-UNKNOWN}" "$port_state"
         sleep 2
     done
-    echo -e "${RED}>>> Timeout waiting for SSH (120s).${NC}"
+    printf "\r\033[K"
+    diagnose_ssh_failure "$timeout"
     return 1
 }
 
@@ -888,7 +977,7 @@ function start_vm_with_failover() {
     start_err=$(gcloud compute instances start "$INSTANCE" --zone="$ZONE" --project="$PROJECT" 2>&1)
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}>>> VM $INSTANCE started successfully with $current_mt!${NC}"
-        wait_for_ssh
+        wait_for_ssh || return 1
         return 0
     fi
 
@@ -908,7 +997,7 @@ function start_vm_with_failover() {
                 retry_err=$(gcloud compute instances start "$INSTANCE" --zone="$ZONE" --project="$PROJECT" 2>&1)
                 if [ $? -eq 0 ]; then
                     echo -e "${GREEN}>>> Resources acquired! VM $INSTANCE is RUNNING with $mt!${NC}"
-                    wait_for_ssh
+                    wait_for_ssh || return 1
                     return 0
                 else
                     echo -e "${RED}>>> $mt also out of capacity in $ZONE.${NC}"
@@ -921,7 +1010,7 @@ function start_vm_with_failover() {
     else
         echo -e "${RED}>>> Retrying start once...${NC}"
         gcloud compute instances start "$INSTANCE" --zone="$ZONE" --project="$PROJECT" 2>/dev/null || true
-        wait_for_ssh
+        wait_for_ssh || return 1
     fi
 }
 
@@ -968,8 +1057,8 @@ fi" 2>/dev/null || echo "NEED_FULL")
 
     echo -e "${YELLOW}>>> Initializing VM and storage for build...${NC}"
     # Slow-path: Cold start or missing/unattached disk
-    run_step "Verifying $target_disk is attached to VM" ensure_disk_attached "$target_disk"
-    run_step "Powering on VM instance with capacity failover" start_vm_with_failover
+    run_step "Verifying $target_disk is attached to VM" ensure_disk_attached "$target_disk" || return 1
+    run_step "Powering on VM instance with capacity failover" start_vm_with_failover || return 1
     run_step "Mounting storage disk at $mp on VM" mount_disk_on_vm "$target_disk" "$mp"
 }
 
@@ -1390,6 +1479,14 @@ export SKIP_GOFILE='$([ "$GOFILE_OPT" = "false" ] && echo "true" || echo "false"
 export AUTO_SHUTDOWN='$SHUT_OPT'
 $( [ -n "${DEVICE_OPT:-}" ] && echo "export DEVICE='$DEVICE_OPT'" )
 $net_speed_setup
+# Keep ccache from filling the boot disk again: a full / breaks cloud-init
+# and SSH key injection on the next boot.  Clear it if space is tight.
+ccache -M 5G >/dev/null 2>&1 || true
+BOOT_AVAIL_MB=\$(df -Pm / | awk 'NR==2{print \$4}')
+if [ -n "\$BOOT_AVAIL_MB" ] && [ "\$BOOT_AVAIL_MB" -lt 3072 ] 2>/dev/null; then
+    echo ">>> Boot disk only \${BOOT_AVAIL_MB}MB free: clearing ccache before build..."
+    ccache -C >/dev/null 2>&1 || rm -rf "\$HOME/.ccache"
+fi
 tmux set-option -t rom-build @build_label '$build_label' 2>/dev/null || true
 tmux rename-window '$win_label' 2>/dev/null || true
 sudo mkdir -p '$mp'
@@ -2225,7 +2322,7 @@ function create_swap_on_mount() {
     fi
     if ! vm_exec "mountpoint -q '$target_mp'" 2>/dev/null; then
         echo -e "${RED}Error: '$target_mp' is not mounted on $INSTANCE.${NC}"
-        echo -e "${YELLOW}Start a build or attach/mount a specific disk for $target_mp first (prevents filling 30GB boot disk).${NC}"
+        echo -e "${YELLOW}Start a build or attach/mount a specific disk for $target_mp first (prevents filling the boot disk).${NC}"
         read -rp "Press Enter to continue..."
         return 1
     fi
@@ -2564,8 +2661,8 @@ function show_info() {
     echo -e "Machine Type : ${BOLD}${current_mt}${NC} (16 vCPUs, 64 GB RAM, Compute-Optimized for ROM Builds)"
     echo -e "Failover     : Auto-cascades across compute types (c2d -> t2d -> c2) if pool is exhausted"
     echo -e "RAM          : ${BOLD}64 GB Physical RAM${NC} (Pure RAM mode by default)"
-    echo -e "Boot Disk    : ${BOLD}30 GB Standard Disk${NC} (Always Free Tier eligible)"
-    echo -e "             - Contains OS, build packages & persistent ccache (15 GB)"
+    echo -e "Boot Disk    : ${BOLD}50 GB Standard Disk${NC} (Always Free Tier eligible)"
+    echo -e "             - Contains OS, build packages & persistent ccache (5 GB cap)"
     echo -e "Storage Disks: Dedicated mountpoints (/mnt/a16, /mnt/a17, /mnt/recovery)"
     echo -e "             - ROM/Recovery Specific: gcp-rom-a16-disk, gcp-rom-a17-disk, gcp-recovery-disk (auto-mounted at boot)"
     echo -e "             - General Shared ($GENERAL_DISK, 500GB): fallback if no specific disk exists; mounts on demand at build time"

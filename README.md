@@ -10,7 +10,7 @@ Cloud build automation and management CLI for compiling custom Android ROMs and 
   * 16 AMD EPYC Milan vCPUs with large L3 cache per core and 3.7 GHz boost, 64 GB Physical RAM, located in `us-central1-a`.
   * Compute-optimized specifically for high-throughput C/C++ Clang, Soong, and Ninja parallel compilation.
   * Compute billing runs only when the VM is active (~$0.726/hr).
-* **Boot Disk (`30 GB pd-standard`)**:
+* **Boot Disk (`50 GB pd-standard`)**:
   * OS (Ubuntu 22.04 LTS), toolchains (`openjdk-17-jdk`, `repo`, `ninja`, Python).
   * **Persistent CCache (15 GB)** stored at `~/.ccache` directly on the boot disk, preserved across ROM disk re-creations and version upgrades.
 * **ROM & Recovery Storage Disks (`pd-balanced SSD`)**:

@@ -66,15 +66,17 @@ sudo chmod a+x /tmp/repo
 sudo mv /tmp/repo /usr/local/bin/repo
 
 echo "============================================================"
-echo " [3/5] Configuring Git & CCache on 30GB Boot Disk..."
+echo " [3/5] Configuring Git & CCache on Boot Disk..."
 echo "============================================================"
 git config --global user.name "Nikhil Suryavanshi"
 git config --global user.email "nikhilpal2705@gmail.com"
 git config --global color.ui auto
 
-# Persistent ccache directly on 30GB boot disk (survives ROM disk swaps)
+# Persistent ccache on the boot disk.  Keep the cap small: the boot disk
+# also holds the OS and apt cache, and if it fills up cloud-init can no
+# longer inject SSH keys at boot.  Build outputs live on the data disk.
 mkdir -p "$HOME/.ccache"
-ccache -M 15G
+ccache -M 5G
 ccache -o compression=true
 
 # Add environment variables to bashrc
