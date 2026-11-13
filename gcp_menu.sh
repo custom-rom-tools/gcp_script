@@ -1626,7 +1626,7 @@ if [ -n "$LOG" ] && [ -f "$LOG" ]; then
   # PTY/typescript logs encode progress with ANSI cursor moves, not newlines.
   # Strip colors, cap width and drop the repeated "0:00 0:01 ..." timer text,
   # otherwise a single "line" can be hundreds of KB and floods the dashboard.
-  PROGRESS=$(tr "\r" "\n" < "$LOG" 2>/dev/null | sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" | grep -E "^\[ *[0-9]+%" | tail -n 1 | sed -E "s/ +[0-9]+:[0-9]{2} .*//" | cut -c1-220)
+  PROGRESS=$(tr "\r" "\n" < "$LOG" 2>/dev/null | sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" | grep -E "^\[ *[0-9]+%|^Syncing:|Fetching:|Checking out:|Checking for bloat:" | tail -n 1 | sed -E "s/ +[0-9]+:[0-9]{2} .*//" | cut -c1-220)
   LAST_LINES=$(tr "\r" "\n" < "$LOG" 2>/dev/null | sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" | grep -v "^$" | tail -n 20 | cut -c1-300)
   ROOT_ERR=$(tr "\r" "\n" < "$LOG" 2>/dev/null | sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" | grep -iE "FAILED:|ninja: build stopped|error:" | tail -n 3 | cut -c1-300)
 fi
