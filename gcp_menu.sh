@@ -439,6 +439,7 @@ if ! mountpoint -q '$mp'; then \
 fi; \
 sudo resize2fs \"\$REAL_DEV\" 2>/dev/null || true; \
 sudo chown \$USER:\$USER '$mp' 2>/dev/null || true; \
+[ ! -f '$mp/swapfile' ] || sudo swapon '$mp/swapfile' 2>/dev/null || true; \
 [ -L '$mp/source' ] && rm -f '$mp/source' 2>/dev/null || true"
 }
 
@@ -1474,6 +1475,7 @@ echo \"PREV=\$PREV|USED=\$USED|DIRS=\$DIRS\"
     runner_script=$(cat <<EOF_RUNNER
 #!/usr/bin/env bash
 export BUILD_VARIANT='$BUILD_TYPE_OPT'
+export SOONG_INCREMENTAL_ANALYSIS=true
 export SF_UPLOAD='$SF_OPT'
 export SKIP_GOFILE='$([ "$GOFILE_OPT" = "false" ] && echo "true" || echo "false")'
 # The device build scripts also honor AUTO_SHUTDOWN.  Keep them from
@@ -1681,7 +1683,7 @@ function follow_build_log_live() {
     local remote_cmd
     remote_cmd=$(cat <<'REMOTE_FOLLOW'
 if [ ! -f "$LOG" ]; then echo "No log file found: $LOG"; exit 1; fi
-tail -n "$LINES" -F -- "$LOG" | perl -e '$|=1; my $buf=""; while (sysread(STDIN, my $chunk, 8192)) { $buf.=$chunk; while ($buf =~ s/^(.*?)[\r\n]//s) { my $line=$1; $line =~ s/\e\[[0-?]*[ -\/]*[\x40-\x7e]//g; print "$line\n" if length $line; } }'
+tail -n "$LINES" -F -- "$LOG" | perl -MTime::HiRes=ualarm -e '$|=1; my $buf=""; local $SIG{ALRM}=sub { if (length $buf) { $buf =~ s/\e\[[0-?]*[ -\/]*[\x40-\x7e]//g; print $buf; $buf=""; } alarm 1; }; alarm 1; while (sysread(STDIN, my $chunk, 8192)) { $buf.=$chunk; while ($buf =~ s/^(.*?)[\r\n]//s) { my $line=$1; $line =~ s/\e\[[0-?]*[ -\/]*[\x40-\x7e]//g; print "$line\n" if length $line; } }'
 REMOTE_FOLLOW
 )
     printf -v remote_cmd 'LOG=%q LINES=%q; %s' "$log" "$lines" "$remote_cmd"
@@ -2816,11 +2818,13 @@ case "$1" in
         done
         [ -n "$TYPE" ] && BUILD_TYPE_OPT="$TYPE"
         SF_OPT="$SF"; GOFILE_OPT="$GOFILE"; SHUT_OPT="$SHUT"
+        ROM_LOWER=$(echo "$ROM" | tr '[:upper:]' '[:lower:]')
+        [ "$ROM_LOWER" = "evox" ] && ROM_LOWER="evolution"
         DEV_LOWER=$(echo "$DEV" | tr '[:upper:]' '[:lower:]')
         if [ "$DEV_LOWER" = "all" ]; then
-            run_build "aosp-${VER}" "${ROM}_all.sh" "$ROM (A${VER}) - All Devices"
+            run_build "aosp-${VER}" "${ROM_LOWER}_all.sh" "$ROM (A${VER}) - All Devices"
         else
-            run_build "aosp-${VER}" "${ROM}_${DEV_LOWER}.sh" "$ROM (A${VER}) - $DEV"
+            run_build "aosp-${VER}" "${ROM_LOWER}_${DEV_LOWER}.sh" "$ROM (A${VER}) - $DEV"
         fi
         exit 0
         ;;
