@@ -916,7 +916,10 @@ function wait_for_ssh() {
     local timeout="${1:-180}"
     local start now elapsed state st ip
     echo -e "${YELLOW}>>> Waiting for SSH service to become ready (up to ${timeout}s)...${NC}"
-    rm -f "$VM_IP_CACHE" 2>/dev/null || true
+    # A stopped VM may receive a different ephemeral NAT IP at the next boot.
+    # Drop both caches so the first SSH probe resolves the current address
+    # from the Compute API instead of reusing the pre-reboot state.
+    rm -f "$VM_IP_CACHE" "$VM_STATE_CACHE" 2>/dev/null || true
     # A cold boot on this image needs ~20-60s before sshd accepts connections,
     # but a full boot disk or missing key makes it fail forever.  Bound the
     # wait and explain the failure instead of hanging the menu.
