@@ -230,6 +230,16 @@ function restore_local_terminal() {
     printf '\033[?1049l\033[0m' 2>/dev/null || true
 }
 
+# Clear the visible screen and scrollback. Falls back to raw ANSI when tput or
+# terminfo is unavailable (otherwise a full-screen log can leave the menu
+# header scrolled out of view).
+function clear_screen() {
+    if [ -n "${TERM:-}" ] && command -v tput >/dev/null 2>&1; then
+        tput clear 2>/dev/null || true
+    fi
+    printf '\033[H\033[2J\033[3J' 2>/dev/null || true
+}
+
 function vm_exec_tty() {
     local ip rc
     ip=$(get_vm_ip 2>/dev/null)
@@ -1544,7 +1554,7 @@ tmux attach-session -t rom-build || tmux ls"
 
 function view_build_logs() {
     while true; do
-        clear 2>/dev/null || true
+        clear_screen
         echo -e "${CYAN}=================================================================${NC}"
         echo -e "${BOLD}                     BUILD STATUS & LOGS                         ${NC}"
         echo -e "${CYAN}=================================================================${NC}"
@@ -1558,13 +1568,28 @@ function view_build_logs() {
         local raw_data
         raw_data=$(vm_exec '
 ST=""
-for f in /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status; do
-  [ -f "$f" ] && ST=$(cat "$f") && break
+STATUS_FILE=""
+# Newest status wins: /mnt/a16/build.status always exists and used to mask
+# the active a17 build, making this page show stale a16 state.
+for f in $(ls -t /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status 2>/dev/null); do
+  [ -f "$f" ] && STATUS_FILE="$f" && break
 done
+BUILD_DIR=""
+LOG=""
+if [ -n "$STATUS_FILE" ]; then
+  BUILD_DIR=$(dirname "$STATUS_FILE")
+  ST=$(cat "$STATUS_FILE" 2>/dev/null)
+  LOG="$BUILD_DIR/build.log"
+else
+  LOG=$(ls -t /mnt/a16/build.log /mnt/a17/build.log /mnt/recovery/build.log 2>/dev/null | head -n 1)
+  [ -n "$LOG" ] && BUILD_DIR=$(dirname "$LOG")
+  ST="NO_BUILD_RECORDED"
+fi
 [ -z "$ST" ] && ST="NO_BUILD_RECORDED"
 
-PROCS=$(ps aux | grep -E "ninja|soong|repo|python3.*upload|ckati|build/envsetup" | grep -v grep || true)
-PROCS_COUNT=$(echo "$PROCS" | grep -c -v "^$" || true)
+# Bracket the first character of each pattern: this shell command line itself
+# contains the pattern text, so an unbracketed pgrep/ps match counts itself.
+PROCS_COUNT=$(pgrep -af "([s]oong_ui|[s]iso|[n]inja|[c]kati|[r]om_build[.]sh|[g]cp_build_script[.]sh)" 2>/dev/null | wc -l)
 
 WD="INACTIVE"
 [ -f /run/idle_watchdog.status ] && WD=$(cat /run/idle_watchdog.status)
@@ -1592,23 +1617,35 @@ $(_sum_net)
 EOF_N2
 NET_SPEED=$(awk -v dr="$((R2 - R1))" -v dt="$((T2 - T1))" "function fmt(b){if(b>=1048576)return sprintf(\"%.1f MB/s\",b/1048576);if(b>=1024)return sprintf(\"%.0f KB/s\",b/1024);return sprintf(\"%.0f B/s\",b)}BEGIN{if(dr<0)dr=0;if(dt<0)dt=0;printf \"DL %s | UL %s\",fmt(dr),fmt(dt)}" 2>/dev/null || echo "N/A")
 
-LOG=$(ls -t /mnt/a16/build.log /mnt/a17/build.log /mnt/recovery/build.log 2>/dev/null | head -n 1)
+LOG_SIZE="N/A"
 PROGRESS="N/A"
 LAST_LINES=""
 ROOT_ERR=""
 if [ -n "$LOG" ] && [ -f "$LOG" ]; then
-  PROGRESS=$(tr "\r" "\n" < "$LOG" 2>/dev/null | grep -E "^\[\s*[0-9]+%|Fetching:|Checking out:|Checking for bloat:" | tail -n 1 || echo "N/A")
-  LAST_LINES=$(tr "\r" "\n" < "$LOG" 2>/dev/null | tail -n 25 || echo "")
-  ROOT_ERR=$(tr "\r" "\n" < "$LOG" 2>/dev/null | grep -inE "error:|FAILED:" | tail -n 3 || true)
+  LOG_SIZE=$(du -h "$LOG" 2>/dev/null | cut -f1)
+  # PTY/typescript logs encode progress with ANSI cursor moves, not newlines.
+  # Strip colors, cap width and drop the repeated "0:00 0:01 ..." timer text,
+  # otherwise a single "line" can be hundreds of KB and floods the dashboard.
+  PROGRESS=$(tr "\r" "\n" < "$LOG" 2>/dev/null | sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" | grep -E "^\[ *[0-9]+%" | tail -n 1 | sed -E "s/ +[0-9]+:[0-9]{2} .*//" | cut -c1-220)
+  LAST_LINES=$(tr "\r" "\n" < "$LOG" 2>/dev/null | sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" | grep -v "^$" | tail -n 20 | cut -c1-300)
+  ROOT_ERR=$(tr "\r" "\n" < "$LOG" 2>/dev/null | sed -E "s/\x1b\[[0-9;?]*[A-Za-z]//g" | grep -iE "FAILED:|ninja: build stopped|error:" | tail -n 3 | cut -c1-300)
+fi
+TARGET_LABEL=""
+if [ -n "$BUILD_DIR" ] && [ -f "$BUILD_DIR/.gcp_build_target" ]; then
+  TARGET_LABEL=$(cat "$BUILD_DIR/.gcp_build_target" 2>/dev/null)
 fi
 
 echo "===META_START==="
 echo "STATUS: $ST"
+echo "STATUS_FILE: $STATUS_FILE"
+echo "BUILD_DIR: $BUILD_DIR"
+echo "TARGET: $TARGET_LABEL"
 echo "PROCS_COUNT: $PROCS_COUNT"
 echo "WATCHDOG: $WD"
 echo "NET_SPEED: $NET_SPEED"
 echo "PROGRESS: $PROGRESS"
 echo "LOG_PATH: $LOG"
+echo "LOG_SIZE: $LOG_SIZE"
 echo "===META_END==="
 echo "===ERROR_START==="
 echo "$ROOT_ERR"
@@ -1623,27 +1660,40 @@ echo "===LOG_END==="
         local b_watchdog="UNKNOWN"
         local b_net_speed="N/A"
         local b_progress="N/A"
-        local b_log="/mnt/a16/build.log"
+        local b_log=""
         local b_errors=""
         local b_tail=""
+        local b_build_dir=""
+        local b_target=""
+        local b_log_size="N/A"
+        local b_status_file=""
 
-        b_status=$(echo "$raw_data" | grep -m1 "^STATUS: " | sed 's/^STATUS: //')
-        b_procs=$(echo "$raw_data" | grep -m1 "^PROCS_COUNT: " | sed 's/^PROCS_COUNT: //')
-        b_watchdog=$(echo "$raw_data" | grep -m1 "^WATCHDOG: " | sed 's/^WATCHDOG: //')
-        b_net_speed=$(echo "$raw_data" | grep -m1 "^NET_SPEED: " | sed 's/^NET_SPEED: //')
-        b_progress=$(echo "$raw_data" | grep -m1 "^PROGRESS: " | sed 's/^PROGRESS: //')
-        b_log=$(echo "$raw_data" | grep -m1 "^LOG_PATH: " | sed 's/^LOG_PATH: //')
+        # Strip CR here too: a stray \r makes the file path unusable for scp/less.
+        b_status=$(echo "$raw_data" | grep -m1 "^STATUS: " | sed 's/^STATUS: //' | tr -d '\r')
+        b_status_file=$(echo "$raw_data" | grep -m1 "^STATUS_FILE: " | sed 's/^STATUS_FILE: //' | tr -d '\r')
+        b_build_dir=$(echo "$raw_data" | grep -m1 "^BUILD_DIR: " | sed 's/^BUILD_DIR: //' | tr -d '\r')
+        b_target=$(echo "$raw_data" | grep -m1 "^TARGET: " | sed 's/^TARGET: //' | tr -d '\r')
+        b_procs=$(echo "$raw_data" | grep -m1 "^PROCS_COUNT: " | sed 's/^PROCS_COUNT: //' | tr -d '\r')
+        b_watchdog=$(echo "$raw_data" | grep -m1 "^WATCHDOG: " | sed 's/^WATCHDOG: //' | tr -d '\r')
+        b_net_speed=$(echo "$raw_data" | grep -m1 "^NET_SPEED: " | sed 's/^NET_SPEED: //' | tr -d '\r')
+        b_progress=$(echo "$raw_data" | grep -m1 "^PROGRESS: " | sed 's/^PROGRESS: //' | tr -d '\r')
+        b_log=$(echo "$raw_data" | grep -m1 "^LOG_PATH: " | sed 's/^LOG_PATH: //' | tr -d '\r')
+        b_log_size=$(echo "$raw_data" | grep -m1 "^LOG_SIZE: " | sed 's/^LOG_SIZE: //' | tr -d '\r')
 
         b_errors=$(echo "$raw_data" | sed -n '/===ERROR_START===/,/===ERROR_END===/p' | grep -v '===ERROR_')
         b_tail=$(echo "$raw_data" | sed -n '/===LOG_START===/,/===LOG_END===/p' | grep -v '===LOG_')
 
-        # Redraw screen with parsed dashboard
-        clear 2>/dev/null || true
+        # Redraw screen with parsed dashboard (clear scrollback too, so a huge
+        # build log that was on screen cannot push the header out of view).
+        clear_screen
         echo -e "${CYAN}=================================================================${NC}"
         echo -e "${BOLD}                     BUILD STATUS & LOGS                         ${NC}"
         echo -e "${CYAN}=================================================================${NC}"
 
-        if [[ "$b_procs" -gt 0 ]]; then
+        local target_desc="${b_target:-build}"
+        [ -n "$b_build_dir" ] && target_desc="$target_desc (${b_build_dir##*/})"
+
+        if [ "${b_procs:-0}" -gt 0 ] 2>/dev/null; then
             echo -e " ${BOLD}BUILD STATE   :${NC} ${GREEN}● ACTIVE / COMPILING${NC} (${b_procs} compiler processes)"
             echo -e " ${BOLD}PROGRESS      :${NC} ${GREEN}${b_progress}${NC}"
         elif [[ "$b_status" == *"SUCCESS"* ]]; then
@@ -1659,18 +1709,27 @@ echo "===LOG_END==="
             echo -e " ${BOLD}LAST PROGRESS :${NC} ${YELLOW}${b_progress}${NC}"
         elif [[ "$b_status" == *"CANCELLED"* ]]; then
             echo -e " ${BOLD}BUILD STATE   :${NC} ${YELLOW}⏹ CANCELLED${NC}"
+        elif [[ "$b_status" == *"RUNNING"* ]]; then
+            echo -e " ${BOLD}BUILD STATE   :${NC} ${YELLOW}● RUNNING${NC} (no compiler process detected; between phases or runner detached)"
+            echo -e " ${BOLD}LAST PROGRESS :${NC} ${YELLOW}${b_progress}${NC}"
         else
-            echo -e " ${BOLD}BUILD STATE   :${NC} ${BLUE}○ IDLE${NC}"
+            echo -e " ${BOLD}BUILD STATE   :${NC} ${BLUE}○ IDLE${NC} (${b_status})"
         fi
 
+        echo -e " ${BOLD}TARGET        :${NC} ${CYAN}${target_desc}${NC}"
         echo -e " ${BOLD}NET SPEED     :${NC} ${CYAN}${b_net_speed}${NC}"
-        [ -n "$b_log" ] && echo -e " ${BOLD}LOG FILE      :${NC} ${b_log}"
+        if [ -n "$b_log" ]; then
+            echo -e " ${BOLD}LOG FILE      :${NC} ${b_log} (${b_log_size})"
+        else
+            echo -e " ${BOLD}LOG FILE      :${NC} ${YELLOW}not found${NC}"
+        fi
+        [ -n "$b_status_file" ] && echo -e " ${BOLD}STATUS FILE   :${NC} ${b_status_file}"
         echo -e " ${BOLD}IDLE WATCHDOG :${NC} ${CYAN}${b_watchdog}${NC} (30m auto-poweroff)"
         echo -e "${CYAN}=================================================================${NC}"
 
         if [ -n "$b_errors" ]; then
             echo -e "${RED}${BOLD}>>> DETECTED ERROR SUMMARY:${NC}"
-            echo -e "${RED}${b_errors}${NC}"
+            printf '%s\n' "$b_errors"
             echo -e "${YELLOW}-----------------------------------------------------------------${NC}"
         fi
 
@@ -1693,33 +1752,47 @@ echo "===LOG_END==="
         read -rp "Select option [0-4]: " log_choice
         case "$log_choice" in
             1)
-                vm_exec_tty "[ -f '$b_log' ] && tr '\r' '\n' < '$b_log' | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | less -R --mouse || echo 'No log file found.'"
+                # +G opens less at the end; the log grows while the build runs.
+                vm_exec_tty "if [ -f '$b_log' ]; then tr '\r' '\n' < '$b_log' | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | less -R --mouse +G; else echo 'No log file found.'; fi"
                 ;;
             2)
-                download_artifacts "log"
+                download_artifacts "log" "$b_log"
                 ;;
             3)
                 echo -e "\n${RED}=================================================================${NC}"
                 echo -e "${BOLD} 🔍 SCANNING BUILD LOG FOR COMPILATION ERRORS                    ${NC}"
                 echo -e "${RED}=================================================================${NC}"
                 echo -e " Log Target: ${BOLD}$b_log${NC}\n"
-                vm_exec "if [ ! -f '$b_log' ]; then
-                    echo 'Error: Log file $b_log does not exist.'
-                    exit 1
-                fi
-                echo '>>> 1. TARGET FAILURES (FAILED: targets with 15 lines of error context):'
-                echo '-----------------------------------------------------------------'
-                grep -inE -B 1 -A 15 'FAILED:' '$b_log' 2>/dev/null | tail -n 60 || echo 'No FAILED tags found.'
-                echo ''
-                echo '>>> 2. SYNTAX & COMPILER ROOT CAUSES (error: / ERROR):'
-                echo '-----------------------------------------------------------------'
-                grep -inE -B 1 -A 8 'error:|ERROR ' '$b_log' 2>/dev/null | tail -n 45 || echo 'No explicit error tags found.'
-                echo '-----------------------------------------------------------------'
-                "
+                vm_exec "
+LOG='$b_log'
+[ -f \"\$LOG\" ] || { echo \"Error: log file not found: \$LOG\"; exit 1; }
+CLEAN=\$(mktemp)
+trap 'rm -f \"\$CLEAN\"' EXIT
+tr '\r' '\n' < \"\$LOG\" | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' > \"\$CLEAN\"
+FAILED_N=\$(grep -acE 'FAILED:' \"\$CLEAN\" || true)
+ERROR_N=\$(grep -acE '(^|: )error:|^ERROR|^ninja: build stopped' \"\$CLEAN\" || true)
+echo \">>> 1. TARGET FAILURES (FAILED: with 12 lines of context) [\$FAILED_N matches]\"
+echo '-----------------------------------------------------------------'
+if [ \"\${FAILED_N:-0}\" -gt 0 ]; then
+    grep -anE -B 1 -A 12 'FAILED:' \"\$CLEAN\" | tail -n 140
+else
+    echo 'No FAILED targets found in this log.'
+    echo 'If the build is still running, a failure may not have occurred yet.'
+fi
+echo ''
+echo \">>> 2. COMPILER / NINJA ROOT CAUSES [\$ERROR_N matches]\"
+echo '-----------------------------------------------------------------'
+if [ \"\${ERROR_N:-0}\" -gt 0 ]; then
+    grep -anE -B 1 -A 6 '(^|: )error:|^ERROR|^ninja: build stopped' \"\$CLEAN\" | tail -n 100
+else
+    echo 'No explicit compiler errors found.'
+fi
+echo '-----------------------------------------------------------------'
+"
                 echo ""
                 read -rp "Press Enter to return (or type 'less' to page all errors): " scan_ch
                 if [ "$scan_ch" = "less" ]; then
-                    vm_exec_tty "tr '\r' '\n' < '$b_log' 2>/dev/null | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | grep -inE -B 1 -A 15 'FAILED:' | less -R --mouse"
+                    vm_exec_tty "tr '\r' '\n' < '$b_log' 2>/dev/null | sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g' | grep -anE -B 1 -A 12 'FAILED:' | less -R --mouse +G"
                 fi
                 ;;
             4)
@@ -1849,6 +1922,7 @@ function stop_build() {
 
 function download_artifacts() {
     local type="$1"
+    local requested_log="${2:-}"
     local dest_dir="$HOME/Downloads"
     mkdir -p "$dest_dir"
 
@@ -1880,18 +1954,27 @@ function download_artifacts() {
     ip=$(get_vm_ip 2>/dev/null)
 
     if [ "$type" = "log" ]; then
-        local remote_log
-        remote_log=$(vm_exec "ls -t /mnt/a16/build.log /mnt/a17/build.log /mnt/recovery/build.log 2>/dev/null | head -n 1" 2>/dev/null || true)
-        remote_log=$(echo "$remote_log" | tr -d '\r' | xargs)
+        local remote_log remote_size label
+        if [ -n "$requested_log" ]; then
+            remote_log="$requested_log"
+        else
+            # Prefer the newest status file so the log belongs to the build the
+            # menu just showed, not merely the most recently touched file.
+            remote_log=$(vm_exec 'f=$(ls -t /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status 2>/dev/null | head -n 1); if [ -n "$f" ]; then echo "$(dirname "$f")/build.log"; else ls -t /mnt/a16/build.log /mnt/a17/build.log /mnt/recovery/build.log 2>/dev/null | head -n 1; fi' 2>/dev/null || true)
+            remote_log=$(echo "$remote_log" | tr -d '\r' | xargs)
+        fi
         if [ -z "$remote_log" ]; then
             echo -e "${YELLOW}>>> No active build.log found on VM (/mnt/a16, /mnt/a17, or /mnt/recovery).${NC}"
             read -rp "Press Enter to return to menu..."
             return 0
         fi
 
+        remote_size=$(vm_exec "stat -c %s '$remote_log' 2>/dev/null || echo 0" 2>/dev/null | tr -d '\r' | xargs)
+        label=$(basename "$(dirname "$remote_log")")
+
         local log_ts
         log_ts=$(date +%Y%m%d_%H%M%S)
-        local local_file="$dest_dir/build_${log_ts}.log"
+        local local_file="$dest_dir/build_${label}_${log_ts}.log"
 
         echo -e "\n${CYAN}>>> Downloading $remote_log -> $local_file${NC}"
         if [ -n "$ip" ] && [ -f "$HOME/.ssh/google_compute_engine" ]; then
@@ -1902,13 +1985,29 @@ function download_artifacts() {
         fi
 
         if [ -f "$local_file" ]; then
-            local fsize
+            local fsize local_size
             fsize=$(ls -lh "$local_file" | awk '{print $5}')
+            local_size=$(wc -c < "$local_file" | tr -d ' ')
             echo ""
             echo -e "${GREEN}============================================================${NC}"
             echo -e "${GREEN} ✅ Full build log downloaded successfully!${NC}"
-            echo -e "    Saved to : ${BOLD}${local_file}${NC} (${fsize})"
+            echo -e "    Source   : ${BOLD}${remote_log}${NC} (${remote_size} bytes)"
+            echo -e "    Saved to : ${BOLD}${local_file}${NC} (${fsize}, ${local_size} bytes)"
+            if [ "${remote_size:-0}" != "$local_size" ]; then
+                echo -e "    ${YELLOW}WARNING: byte count differs — the log may still be growing.${NC}"
+            fi
+
+            # Also write a readable copy: PTY logs are full of ANSI/CR control codes.
+            local clean_file="${local_file%.log}_clean.log"
+            if command -v perl >/dev/null 2>&1; then
+                perl -pe 's/\e\[[0-9;?]*[A-Za-z]//g; s/\r/\n/g' "$local_file" > "$clean_file" 2>/dev/null || true
+                if [ -s "$clean_file" ]; then
+                    echo -e "    Clean log: ${BOLD}${clean_file}${NC} (ANSI/CR removed)"
+                fi
+            fi
             echo -e "${GREEN}============================================================${NC}"
+        else
+            echo -e "${RED}>>> Download failed: $local_file was not created.${NC}"
         fi
         read -rp "Press Enter to return to menu..."
         return 0
@@ -2743,7 +2842,7 @@ trap 'restore_local_terminal' EXIT
 while true; do
     # Re-assert it on every redraw in case a step re-enabled mouse reporting.
     disable_mouse_reporting
-    clear 2>/dev/null || true
+    clear_screen
     echo -e "${CYAN}=================================================================${NC}"
     echo -e "${BOLD}              GCP BUILD & DOWNLOAD MANAGER                       ${NC}"
     echo -e "${CYAN}=================================================================${NC}"
