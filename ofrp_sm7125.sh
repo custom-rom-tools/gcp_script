@@ -100,7 +100,11 @@ echo "=============================="
 export ALLOW_MISSING_DEPENDENCIES=true
 export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
 export LC_ALL="C.UTF-8"
+# envsetup sources third-party vendorsetup scripts that can return nonzero
+# when no legacy lunch alias matches; keep errexit from aborting setup.
+set +e
 source build/envsetup.sh
+set -e
 export USE_CCACHE=0
 export CCACHE_DISABLE=1
 unset CCACHE_EXEC CCACHE_DIR
