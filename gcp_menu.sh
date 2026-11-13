@@ -2324,7 +2324,7 @@ done
         }
         END {
             print "Disks in Project:";
-            printf "%-18s %-14s %-7s %-7s %-7s %-6s %-12s %s\n", "NAME", "ZONE", "SIZE", "USED", "FREE", "USE%", "TYPE", "STATUS";
+            printf "%-18s %-14s %-7s %-7s %-7s %-6s %-12s %-5s %s\n", "NAME", "ZONE", "SIZE", "USED", "FREE", "USE%", "TYPE", "MEDIA", "STATUS";
             if (dc == 0) {
                 print "  (none)";
             } else {
@@ -2334,8 +2334,13 @@ done
                     us = (dv != "" && dv in u_used) ? u_used[dv] : "-";
                     fr = (dv != "" && dv in u_free) ? u_free[dv] : "-";
                     pc = (dv != "" && dv in u_pct)  ? u_pct[dv]  : "-";
-                    printf "%-18s %-14s %-7s %-7s %-7s %-6s %-12s %s\n",
-                        dn, d_zone[i], d_size[i] "G", us, fr, pc, d_type[i], d_stat[i];
+                    # pd-standard is spinning HDD; pd-balanced/pd-ssd/extreme
+                    # and hyperdisk/local-ssd are flash.  Show it explicitly so
+                    # the size/price trade-off is obvious at a glance.
+                    media = (d_type[i] == "pd-standard") ? "HDD" : \
+                            (d_type[i] ~ /^(pd-ssd|pd-balanced|pd-extreme|hyperdisk|local-ssd)/) ? "SSD" : "?";
+                    printf "%-18s %-14s %-7s %-7s %-7s %-6s %-12s %-5s %s\n",
+                        dn, d_zone[i], d_size[i] "G", us, fr, pc, d_type[i], media, d_stat[i];
                 }
             }
             print "";
