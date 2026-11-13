@@ -1669,9 +1669,7 @@ function attach_tmux_session() {
 tmux attach-session -t rom-build || tmux ls"
 }
 
-# Realtime build-log follower. `less +G` only jumps to the end once, so a build
-# that is still writing looked frozen until a keypress. `tail -f` plus
-# line-buffered filters keeps the screen updating as ninja emits output.
+# Realtime follower that flushes newline and carriage-return records as they arrive.
 function follow_build_log_live() {
     local log="$1"
     local lines="${2:-400}"
@@ -1680,12 +1678,14 @@ function follow_build_log_live() {
         return 1
     fi
     echo -e "${CYAN}>>> Following ${log} in realtime (last ${lines} lines, Ctrl+C to stop)${NC}\n"
-    vm_exec_tty "LOG='$log'
-if [ ! -f \"\$LOG\" ]; then echo \"No log file found: \$LOG\"; exit 1; fi
-stdbuf -oL tail -n $lines -f -- \"\$LOG\" 2>/dev/null \
-  | stdbuf -oL tr '\\r' '\\n' \
-  | stdbuf -oL sed -u -E 's/\x1b\\[[0-9;?]*[A-Za-z]//g' \
-  | grep --line-buffered -v '^\$'"
+    local remote_cmd
+    remote_cmd=$(cat <<'REMOTE_FOLLOW'
+if [ ! -f "$LOG" ]; then echo "No log file found: $LOG"; exit 1; fi
+tail -n "$LINES" -F -- "$LOG" | perl -e '$|=1; my $buf=""; while (sysread(STDIN, my $chunk, 8192)) { $buf.=$chunk; while ($buf =~ s/^(.*?)[\r\n]//s) { my $line=$1; $line =~ s/\e\[[0-?]*[ -\/]*[\x40-\x7e]//g; print "$line\n" if length $line; } }'
+REMOTE_FOLLOW
+)
+    printf -v remote_cmd 'LOG=%q LINES=%q; %s' "$log" "$lines" "$remote_cmd"
+    vm_exec_tty "$remote_cmd"
     local rc=$?
     restore_local_terminal
     return $rc
