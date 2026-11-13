@@ -304,8 +304,8 @@ function get_disk_meta() {
     elif [ "$target_disk" = "gcp-recovery-disk" ]; then
         META_DEV_NAME="rom-recovery"
         META_DEFAULT_MP="/mnt/recovery"
-        META_SIZE_GB=100
-        META_DESC="Dedicated 100GB SSD storage for Recovery builds"
+        META_SIZE_GB=400
+        META_DESC="Dedicated 400GB storage for Recovery builds (OFRP + TWRP)"
         META_IS_GENERAL=0
     elif [ "$target_disk" = "$GENERAL_DISK" ]; then
         META_DEV_NAME="$GENERAL_DEV_NAME"
@@ -481,9 +481,25 @@ function create_and_attach_disk() {
     echo -e "${BOLD} Creating & Auto-Linking ROM Disk: $target_disk (${size_gb}GB)${NC}"
     echo -e "${CYAN}============================================================${NC}"
 
-    # 1. Create disk if not exists
+    # 1. Create disk if not exists, otherwise grow it when the requested size is larger.
     if gcloud compute disks describe "$target_disk" --zone="$ZONE" --project="$PROJECT" >/dev/null 2>&1; then
-        echo -e " ${GREEN}✔${NC} Disk '$target_disk' already exists in GCP."
+        local current_size
+        current_size=$(gcloud compute disks describe "$target_disk" --zone="$ZONE" --project="$PROJECT" \
+            --format="value(sizeGb)" 2>/dev/null | tr -d '\r')
+        echo -e " ${GREEN}✔${NC} Disk '$target_disk' already exists in GCP (${current_size}GB)."
+        if [[ "$current_size" =~ ^[0-9]+$ ]] && [ "$current_size" -lt "$size_gb" ]; then
+            echo -e " ${CYAN}>>> Growing '$target_disk' from ${current_size}GB to ${size_gb}GB...${NC}"
+            if run_step "Resizing $target_disk from ${current_size}GB to ${size_gb}GB" \
+                gcloud compute disks resize "$target_disk" \
+                    --project="$PROJECT" \
+                    --zone="$ZONE" \
+                    --size="${size_gb}GB" --quiet; then
+                echo -e " ${GREEN}✔${NC} Disk resized. The filesystem is grown automatically when it is mounted."
+            else
+                echo -e "${RED}>>> Resize failed (regional SSD/DISK quota?). Keeping ${current_size}GB.${NC}"
+                size_gb="$current_size"
+            fi
+        fi
     else
         local disk_type="pd-balanced"
         if ! run_step "Creating ${size_gb}GB $disk_type SSD disk '$target_disk' in $ZONE" \
@@ -2354,7 +2370,7 @@ function menu_manage_disk() {
         echo -e "  ${GREEN}1)${NC} Create General Shared Disk (500GB - For all ROMs & Recovery)"
         echo -e "  ${GREEN}2)${NC} Create A16 Disk (400GB - Dedicated /mnt/a16)"
         echo -e "  ${GREEN}3)${NC} Create A17 Disk (400GB - Dedicated /mnt/a17)"
-        echo -e "  ${GREEN}4)${NC} Create Recovery Disk (100GB - Dedicated /mnt/recovery)"
+        echo -e "  ${GREEN}4)${NC} Create Recovery Disk (400GB - Dedicated /mnt/recovery)"
         echo ""
         echo -e " ${BOLD}[ATTACH / DETACH / FORMAT]${NC}"
         echo -e "  ${BLUE}5)${NC} Attach Disk"
@@ -2384,7 +2400,7 @@ function menu_manage_disk() {
                 read -rp "Press Enter to continue..."
                 ;;
             4)
-                create_and_attach_disk "gcp-recovery-disk" 100 "Dedicated 100GB SSD storage for Recovery builds"
+                create_and_attach_disk "gcp-recovery-disk" 400 "Dedicated 400GB storage for Recovery builds (OFRP + TWRP)"
                 read -rp "Press Enter to continue..."
                 ;;
             5)
