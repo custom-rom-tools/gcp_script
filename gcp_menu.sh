@@ -10,6 +10,9 @@
 INSTANCE="rom-build-farm"
 ZONE="us-central1-a"
 PROJECT="project-53211141-f92a-48c1-b88"
+# Resolve paths relative to this script, even when setup_environment() was
+# skipped or the menu was launched from another working directory.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_OUT_DIR="$HOME/Downloads"
 LOCAL_LINKS_FILE="$HOME/.gcp_upload_links.log"
 GENERAL_DISK="gcp-general-disk"
@@ -1582,15 +1585,15 @@ EOF_RUNNER
     FORMAT_DISK_OPT=""
     DEVICE_OPT=""
 
-    vm_scp "$SCRIPT_DIR/upload.py" "$USER@$INSTANCE:~/upload.py" || {
-        echo -e "${YELLOW}>>> [WARN] Could not refresh ~/upload.py on the VM; it may still use the older metadata writer.${NC}"
-    }
+    local upload_script="$SCRIPT_DIR/upload.py"
+    if [ -f "$upload_script" ]; then
+        vm_scp "$upload_script" "$USER@$INSTANCE:~/upload.py" || \
+            echo -e "${YELLOW}>>> [WARN] Could not refresh ~/upload.py on the VM; build will continue with the existing uploader.${NC}"
+    else
+        echo -e "${YELLOW}>>> [WARN] Local upload.py not found at $upload_script; build will continue with the existing VM uploader.${NC}"
+    fi
     vm_exec "printf '%s' '$runner_b64' | base64 -d > /tmp/gcp_build_runner.sh && chmod +x /tmp/gcp_build_runner.sh && tmux kill-session -t rom-build 2>/dev/null || true"
-    local build_output_tmp
-    build_output_tmp=$(mktemp /tmp/gcp_build_output.XXXXXX)
-    vm_exec_tty "tmux new-session -A -s rom-build 'bash /tmp/gcp_build_runner.sh'" | tee "$build_output_tmp"
-    cache_upload_links_from_output "$build_output_tmp"
-    rm -f "$build_output_tmp"
+    vm_exec "tmux new-session -d -s rom-build 'bash /tmp/gcp_build_runner.sh'"
     sync_upload_links >/dev/null 2>&1 || true
     if [ -s "$LOCAL_LINKS_FILE" ]; then
         echo -e "\n${CYAN}>>> Saved Upload Links ($LOCAL_LINKS_FILE):${NC}"
