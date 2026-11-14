@@ -222,10 +222,14 @@ def generate_sha256sum(file_path: Path) -> Path | None:
 
 def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_device: str = "") -> Path:
     """
-    Ensure OFRP and TWRP recovery artifacts (.img, .zip) have an 8-digit timestamp
-    (YYYYMMDD) and standard canonical naming before uploading.
+    Ensure OFRP and TWRP recovery artifacts (.img, .zip) have an 8-digit timestamp (YYYYMMDD).
+    If the file already has a timestamp, it is left untouched.
     """
     if not artifact.is_file() or artifact.suffix.lower() not in [".img", ".zip"]:
+        return artifact
+
+    # If the recovery file already has an 8-digit timestamp (e.g. 20261114), leave as-is
+    if re.search(r'(20\d{6})', artifact.name):
         return artifact
 
     sub_lower = remote_subdir.lower()
@@ -249,16 +253,12 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
             dev = "sm7125" if d.lower() == "sm7125" else d.upper()
             break
 
-    # Determine timestamp: extract existing 8-digit date (YYYYMMDD) or generate from file mtime / today
-    date_match = re.search(r'(20\d{6})', artifact.name)
-    if date_match:
-        ts = date_match.group(1)
-    else:
-        try:
-            mtime = artifact.stat().st_mtime
-            ts = time.strftime("%Y%m%d", time.localtime(mtime))
-        except Exception:
-            ts = time.strftime("%Y%m%d")
+    # Generate timestamp from file mtime or today
+    try:
+        mtime = artifact.stat().st_mtime
+        ts = time.strftime("%Y%m%d", time.localtime(mtime))
+    except Exception:
+        ts = time.strftime("%Y%m%d")
 
     suffix = artifact.suffix.lower()
 
@@ -272,11 +272,8 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
         version = ver_match.group(1) if ver_match else "12.1"
         target_name = f"TWRP-{version}-{ts}-Unofficial-{dev}{suffix}"
 
-    if target_name == artifact.name:
-        return artifact
-
     new_path = artifact.with_name(target_name)
-    print(f">>> [RECOVERY RENAME] Renaming {artifact.name} -> {target_name} (with timestamp)")
+    print(f">>> [RECOVERY RENAME] Renaming {artifact.name} -> {target_name} (added timestamp)")
 
     parent = artifact.parent
     old_stem = artifact.stem
