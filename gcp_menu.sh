@@ -307,8 +307,8 @@ function get_disk_meta() {
     elif [ "$target_disk" = "gcp-recovery-disk" ]; then
         META_DEV_NAME="rom-recovery"
         META_DEFAULT_MP="/mnt/recovery"
-        META_SIZE_GB=250
-        META_DESC="Dedicated 250GB storage for Recovery builds (OFRP + TWRP)"
+        META_SIZE_GB=300
+        META_DESC="Dedicated 300GB storage for Recovery builds (OFRP + TWRP)"
         META_IS_GENERAL=0
     elif [ "$target_disk" = "$GENERAL_DISK" ]; then
         META_DEV_NAME="$GENERAL_DEV_NAME"
@@ -2677,7 +2677,7 @@ function menu_manage_disk() {
         echo -e "  ${GREEN}1)${NC} Create General Shared Disk (500GB - For all ROMs & Recovery)"
         echo -e "  ${GREEN}2)${NC} Create A16 Disk (500GB - Dedicated /mnt/a16)"
         echo -e "  ${GREEN}3)${NC} Create A17 Disk (500GB - Dedicated /mnt/a17)"
-        echo -e "  ${GREEN}4)${NC} Create Recovery Disk (250GB - Dedicated /mnt/recovery)"
+        echo -e "  ${GREEN}4)${NC} Create Recovery Disk (300GB - Dedicated /mnt/recovery)"
         echo ""
         echo -e " ${BOLD}[ATTACH / DETACH / FORMAT]${NC}"
         echo -e "  ${BLUE}5)${NC} Attach Disk"
@@ -2707,7 +2707,7 @@ function menu_manage_disk() {
                 read -rp "Press Enter to continue..."
                 ;;
             4)
-                create_and_attach_disk "gcp-recovery-disk" 250 "Dedicated 250GB storage for Recovery builds (OFRP + TWRP)"
+                create_and_attach_disk "gcp-recovery-disk" 300 "Dedicated 300GB storage for Recovery builds (OFRP + TWRP)"
                 read -rp "Press Enter to continue..."
                 ;;
             5)
