@@ -78,15 +78,36 @@ def get_build_sort_key(file_path: Path) -> tuple:
 def find_companions(artifact: Path) -> list[Path]:
     """Find companion checksum/manifest/changelog files (.sha256sum, .md5sum, .json, .txt)."""
     companions: list[Path] = []
-    parent, stem = artifact.parent, artifact.stem
+    parent = artifact.parent
+    name = artifact.name
+    stem = artifact.stem
 
     for cand in sorted(parent.iterdir()):
         if not cand.is_file() or cand.stat().st_size == 0 or cand == artifact:
             continue
-        if not (cand.name.startswith(stem) or "changelog" in cand.name.lower()):
+
+        cand_suffix = cand.suffix.lower()
+        if cand_suffix in [".img", ".zip", ".tar", ".gz", ".br", ".lz4"]:
             continue
 
-        match cand.suffix.lower():
+        # Don't associate .img companions with .zip or vice versa
+        if artifact.suffix.lower() == ".zip" and ".img." in cand.name.lower():
+            continue
+        if artifact.suffix.lower() == ".img" and ".zip." in cand.name.lower():
+            continue
+
+        is_match = False
+        if "changelog" in cand.name.lower():
+            is_match = True
+        elif cand.name.startswith(name):
+            is_match = True
+        elif cand.stem == stem:
+            is_match = True
+
+        if not is_match:
+            continue
+
+        match cand_suffix:
             case ".sha256sum" | ".sha256" | ".md5sum" | ".md5" | ".json":
                 if cand not in companions:
                     companions.append(cand)
@@ -273,6 +294,9 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
         target_name = f"TWRP-{version}-{ts}-Unofficial-{dev}{suffix}"
 
     new_path = artifact.with_name(target_name)
+    if new_path == artifact:
+        return artifact
+
     print(f">>> [RECOVERY RENAME] Renaming {artifact.name} -> {target_name} (added timestamp)")
 
     parent = artifact.parent
@@ -280,9 +304,20 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
     old_name = artifact.name
     companions_to_rename = []
     for cand in parent.iterdir():
-        if cand.is_file() and cand != artifact and (cand.name.startswith(old_stem) or cand.name.startswith(old_name)):
-            comp_suffix = cand.name[len(old_name):] if cand.name.startswith(old_name) else cand.name[len(old_stem):]
-            companions_to_rename.append((cand, parent / f"{new_path.stem}{comp_suffix}"))
+        if not cand.is_file() or cand == artifact:
+            continue
+        if cand.suffix.lower() in [".img", ".zip"]:
+            continue
+        if artifact.suffix.lower() == ".zip" and ".img." in cand.name.lower():
+            continue
+        if artifact.suffix.lower() == ".img" and ".zip." in cand.name.lower():
+            continue
+
+        if cand.name.startswith(old_name):
+            comp_suffix = cand.name[len(old_name):]
+            companions_to_rename.append((cand, parent / f"{new_path.name}{comp_suffix}"))
+        elif cand.stem == old_stem:
+            companions_to_rename.append((cand, parent / f"{new_path.stem}{cand.suffix}"))
 
     try:
         if new_path.exists() and new_path != artifact:
@@ -321,15 +356,17 @@ def resolve_artifacts(raw_inputs: list[str], build_type: str = "rom", remote_sub
 
         if p.is_dir():
             for cand in discover_candidates(p, build_type, remote_subdir=remote_subdir):
+                if not cand.is_file():
+                    continue
                 if is_rec:
                     cand = normalize_recovery_artifact(cand, remote_subdir=remote_subdir, target_device=target_dev)
-                if cand not in targets:
+                if cand.is_file() and cand not in targets:
                     targets.append(cand)
                     sha_comp = generate_sha256sum(cand)
-                    if sha_comp and sha_comp not in targets:
+                    if sha_comp and sha_comp.is_file() and sha_comp not in targets:
                         targets.append(sha_comp)
                     for comp in find_companions(cand):
-                        if comp not in targets:
+                        if comp.is_file() and comp not in targets:
                             targets.append(comp)
             continue
 
@@ -339,16 +376,25 @@ def resolve_artifacts(raw_inputs: list[str], build_type: str = "rom", remote_sub
         if is_rec:
             p = normalize_recovery_artifact(p, remote_subdir=remote_subdir, target_device=target_dev)
 
-        if p not in targets:
+        if p.is_file() and p not in targets:
             targets.append(p)
             sha_comp = generate_sha256sum(p)
-            if sha_comp and sha_comp not in targets:
+            if sha_comp and sha_comp.is_file() and sha_comp not in targets:
                 targets.append(sha_comp)
             for comp in find_companions(p):
-                if comp not in targets:
+                if comp.is_file() and comp not in targets:
                     targets.append(comp)
 
-    return targets
+    # Sanitize targets: only keep existing, non-empty files
+    valid_targets: list[Path] = []
+    for t in targets:
+        try:
+            if t.is_file() and t.stat().st_size > 0 and t not in valid_targets:
+                valid_targets.append(t)
+        except Exception:
+            pass
+
+    return valid_targets
 
 
 def upload_sf(files: list[Path], remote_subdir: str, key_file: Path | None) -> str | None:
@@ -520,7 +566,11 @@ def main():
 
     print(f"\nArtifacts to upload ({len(files)}):")
     for f in files:
-        print(f" - {f.name} ({f.stat().st_size / (1024 * 1024):.2f} MB)")
+        try:
+            size_mb = f.stat().st_size / (1024 * 1024)
+            print(f" - {f.name} ({size_mb:.2f} MB)")
+        except Exception as e:
+            print(f" - {f.name} (error reading size: {e})")
 
     uploaded_links: list[tuple[str, str, str]] = []
 
