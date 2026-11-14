@@ -788,15 +788,28 @@ function format_disk_action() {
 
     run_step "Unmounting and formatting $target_disk as clean ext4" \
         vm_exec "$resolve_cmd; \
-while IFS= read -r omp; do \
+set -e; \
+tmux kill-session -t rom-build 2>/dev/null || true; \
+ALL_MOUNTS=\$(lsblk -rn -o MOUNTPOINT \"\$REAL_DEV\" 2>/dev/null | grep -v '^$' || true); \
+if [ -z \"\$ALL_MOUNTS\" ]; then ALL_MOUNTS=\$(findmnt -rn -S \"\$REAL_DEV\" -o TARGET 2>/dev/null || true); fi; \
+for omp in \$ALL_MOUNTS; do \
     [ -z \"\$omp\" ] && continue; \
     sudo swapoff \"\${omp}/swapfile\" 2>/dev/null || true; \
-    sudo umount \"\$omp\" 2>/dev/null || sudo umount -l \"\$omp\" 2>/dev/null || true; \
-done < <(findmnt -rn -S \"\$REAL_DEV\" -o TARGET 2>/dev/null || true); \
+    sudo fuser -km \"\$omp\" 2>/dev/null || true; \
+    sudo umount -f \"\$omp\" 2>/dev/null || sudo umount -l \"\$omp\" 2>/dev/null || true; \
+done; \
+sudo fuser -km \"\$REAL_DEV\" 2>/dev/null || true; \
+sleep 1; \
+sudo wipefs -af \"\$REAL_DEV\" 2>/dev/null || true; \
 sudo mkfs.ext4 -F -m 1 -E lazy_itable_init=0,lazy_journal_init=0 \"\$REAL_DEV\"; \
 TMP_MP=\$(mktemp -d /tmp/gcp_fmt.XXXXXX); \
-sudo mount \"\$REAL_DEV\" \"\$TMP_MP\" && sudo chown \$USER:\$USER \"\$TMP_MP\" && sudo umount \"\$TMP_MP\"; \
-rmdir \"\$TMP_MP\" 2>/dev/null || true"
+sudo mount \"\$REAL_DEV\" \"\$TMP_MP\"; \
+sudo chown \$USER:\$USER \"\$TMP_MP\"; \
+sudo chmod 755 \"\$TMP_MP\"; \
+rm -f \"\$TMP_MP/.gcp_build_target\" \"\$TMP_MP/build.status\" \"\$TMP_MP/build.log\" 2>/dev/null || true; \
+sudo umount \"\$TMP_MP\"; \
+rmdir \"\$TMP_MP\" 2>/dev/null || true; \
+sudo blkid \"\$REAL_DEV\" | grep -q 'TYPE=\"ext4\"'"
 
     if [ "$META_IS_GENERAL" -eq 0 ] && [ -n "$META_DEFAULT_MP" ]; then
         run_step "Remounting formatted specific disk at $META_DEFAULT_MP" \
@@ -1366,14 +1379,14 @@ function prompt_options() {
 
     if [ -z "$SHUT_OPT" ]; then
         if [ -t 0 ]; then
-            read -rp " Power off immediately when build ends? (Y/n; n = 30m idle timeout): " auto_in
-            if [[ "$auto_in" =~ ^[Nn]$ ]]; then
-                SHUT_OPT="false"
-            else
+            read -rp " Power off immediately when build ends? (y/N; default: n = keep VM running): " auto_in
+            if [[ "$auto_in" =~ ^[Yy]$ ]]; then
                 SHUT_OPT="true"
+            else
+                SHUT_OPT="false"
             fi
         else
-            SHUT_OPT="true"
+            SHUT_OPT="false"
         fi
     fi
 }
@@ -1602,41 +1615,41 @@ else
 fi
 
 if [ \$BUILD_EXIT -eq 0 ]; then
-    sudo rm -f /run/gcp-build-active 2>/dev/null || true
     echo "BUILD_STATUS: SUCCESS (\$BUILD_VARIANT) - \$(date)" > '$mp/build.status' 2>/dev/null || true
     echo -e '\n\033[1;32m============================================================\033[0m'
     echo -e '\033[1;32m [SUCCESS] Build and upload completed successfully!\033[0m'
     echo -e '\033[1;32m============================================================\033[0m'
-    if [ "\$WRAPPER_SHUTDOWN" = 'true' ]; then
-        echo '>>> Auto-shutdown: powering off now.'
-        sudo poweroff || true
-        exit 0
-    else
-        echo "\$(date +%s)" | sudo tee /run/gcp-build-shutdown-pending >/dev/null 2>&1 || true
-        echo '>>> Delayed shutdown armed: powering off after 30 minutes without build activity.'
-    fi
 else
     echo "BUILD_STATUS: FAILED (Exit Code \$BUILD_EXIT) - \$(date)" > '$mp/build.status' 2>/dev/null || true
     echo -e '\n\033[1;31m============================================================\033[0m'
-    echo -e "\033[1;31m [ERROR] Build failed with exit code \$BUILD_EXIT!\033[0m"
+    echo -e "\033[1;31m [ERROR] Build stopped or failed with exit code \$BUILD_EXIT!\033[0m"
     echo -e '\033[1;31m============================================================\033[0m'
     echo "Full build output is saved at: $mp/build.log"
-    # The build has ended; let the idle watchdog start its 30-minute timer.
-    sudo rm -f /run/gcp-build-active 2>/dev/null || true
-    if [ "\$WRAPPER_SHUTDOWN" = 'true' ]; then
-        echo '>>> Auto-shutdown: powering off now.'
+fi
+
+sudo rm -f /run/gcp-build-shutdown-pending 2>/dev/null || true
+
+if [ "\$WRAPPER_SHUTDOWN" = 'true' ]; then
+    echo ""
+    echo -e '\033[1;33m>>> Auto-shutdown requested: Powering off VM in 15 seconds...\033[0m'
+    echo -e '\033[1;33m>>> Press any key to cancel shutdown and keep session open...\033[0m'
+    if read -t 15 -n 1 -s -r; then
+        echo -e '\n\033[1;32m>>> Auto-shutdown cancelled by user. Session will remain open.\033[0m'
+    else
+        echo -e '\n>>> Powering off now.'
+        sudo rm -f /run/gcp-build-active 2>/dev/null || true
         sudo poweroff || true
         exit 0
-    else
-        echo "\$(date +%s)" | sudo tee /run/gcp-build-shutdown-pending >/dev/null 2>&1 || true
-        echo '>>> Auto-shutdown is disabled; the idle watchdog will power off after 30 minutes without build activity.'
-        echo '>>> Press Enter to enter the bash prompt...'
-        read -r
     fi
-    exec bash
 fi
-echo -e '\nPress Enter to enter bash prompt (tmux session will remain open)...'
-read -r
+
+echo ""
+echo -e '\033[1;36m============================================================\033[0m'
+echo -e '\033[1;36m Build session finished (Exit code: '\$BUILD_EXIT'). Session remains open.\033[0m'
+echo -e '\033[1;36m============================================================\033[0m'
+echo -e '\nPress [Enter] to enter interactive bash prompt (or Ctrl+B then D to detach)...'
+read -r || true
+sudo rm -f /run/gcp-build-active 2>/dev/null || true
 exec bash
 EOF_RUNNER
 )
@@ -1668,6 +1681,10 @@ EOF_RUNNER
         echo -e "\n${CYAN}>>> Saved Upload Links ($LOCAL_LINKS_FILE):${NC}"
         tail -n 5 "$LOCAL_LINKS_FILE"
     fi
+    echo ""
+    echo -e "${GREEN}>>> Connecting to live build session in tmux... (Detach: Ctrl+B then D)${NC}\n"
+    sleep 1
+    attach_tmux_session
 }
 
 # Generates remote shell snippet to install /usr/local/bin/vm_net_speed.sh and configure tmux status bar.
