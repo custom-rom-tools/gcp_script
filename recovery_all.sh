@@ -356,13 +356,11 @@ echo "============================================================"
 echo "============================================================"
 
 if [ ${#FAILED_BUILDS[@]} -gt 0 ]; then
+    echo -e "\n>>> Multi-Recovery batch build completed with failures. Session will remain open."
+    read -rp "Press [Enter] to exit..." || true
     exit 1
 fi
 
-# Auto-shutdown if requested (only when all builds succeed)
-if [ "${AUTO_SHUTDOWN:-true}" = "true" ]; then
-    echo "Auto-shutdown enabled: Powering down VM in 10 seconds to stop billing..."
-    sleep 10
-    sudo poweroff
-fi
+echo -e "\n>>> Multi-Recovery batch build completed successfully. Session will remain open."
+read -rp "Press [Enter] to exit..." || true
 exit 0

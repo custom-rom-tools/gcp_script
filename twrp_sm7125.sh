@@ -13,6 +13,7 @@
 # =============================================================================
 
 set -e
+trap 'ERR_CODE=$?; echo -e "\n\033[1;31m============================================================\033[0m"; echo -e "\033[1;31m>>> [ERROR] Command failed at line $LINENO (exit code $ERR_CODE)!\033[0m"; echo -e "\033[1;31m>>> Build aborted in between. Session will remain open.\033[0m"; echo -e "\033[1;31m============================================================\033[0m"; read -rp "Press [Enter] to exit..." || true; exit $ERR_CODE' ERR
 
 # =============================================================================
 # CONFIGURATION
@@ -100,6 +101,7 @@ echo "=============================="
 export ALLOW_MISSING_DEPENDENCIES=true
 export TW_DEVICE_VERSION="12.1"
 export LC_ALL="C.UTF-8"
+set +e
 source build/envsetup.sh
 export USE_CCACHE=0
 export CCACHE_DISABLE=1
@@ -109,6 +111,7 @@ if [ -f "device/realme/${DEVICE}/vendorsetup.sh" ]; then
 elif [ -f "device/realme/sm7125/vendorsetup.sh" ]; then
     source "device/realme/sm7125/vendorsetup.sh"
 fi
+set -e
 
 if [ "${DEVICE,,}" = "all" ]; then
     TARGET_DEVICES=("RMX2170" "RMX2061" "RMX3081")
@@ -178,12 +181,11 @@ echo " $RECOVERY_NAME Build Summary"
 echo "============================================================"
 
 if [ ${#FAILED_DEVS[@]} -gt 0 ]; then
+    echo -e "\n>>> Build finished with failures. Session will remain open."
+    read -rp "Press [Enter] to exit..." || true
     exit 1
 fi
 
-# Auto-shutdown if requested
-if [ "${AUTO_SHUTDOWN:-true}" = "true" ]; then
-    echo "Auto-shutdown enabled: Powering down VM in 10 seconds to stop billing..."
-    sleep 10
-    sudo poweroff
-fi
+echo -e "\n>>> Build completed successfully. Session will remain open."
+read -rp "Press [Enter] to exit..." || true
+exit 0

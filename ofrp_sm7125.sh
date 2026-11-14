@@ -13,6 +13,7 @@
 # =============================================================================
 
 set -e
+trap 'ERR_CODE=$?; echo -e "\n\033[1;31m============================================================\033[0m"; echo -e "\033[1;31m>>> [ERROR] Command failed at line $LINENO (exit code $ERR_CODE)!\033[0m"; echo -e "\033[1;31m>>> Build aborted in between. Session will remain open.\033[0m"; echo -e "\033[1;31m============================================================\033[0m"; read -rp "Press [Enter] to exit..." || true; exit $ERR_CODE' ERR
 
 # =============================================================================
 # CONFIGURATION
@@ -189,12 +190,11 @@ echo " $RECOVERY_NAME Build Summary"
 echo "============================================================"
 
 if [ ${#FAILED_DEVS[@]} -gt 0 ]; then
+    echo -e "\n>>> Build finished with failures. Session will remain open."
+    read -rp "Press [Enter] to exit..." || true
     exit 1
 fi
 
-# Auto-shutdown if requested
-if [ "${AUTO_SHUTDOWN:-true}" = "true" ]; then
-    echo "Auto-shutdown enabled: Powering down VM in 10 seconds to stop billing..."
-    sleep 10
-    sudo poweroff
-fi
+echo -e "\n>>> Build completed successfully. Session will remain open."
+read -rp "Press [Enter] to exit..." || true
+exit 0
