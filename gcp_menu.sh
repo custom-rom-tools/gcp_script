@@ -1316,10 +1316,26 @@ function detach_disk_action() {
     echo -e "${GREEN}>>> Disk $target_disk detached successfully!${NC}"
 }
 
+function reset_build_options() {
+    BUILD_TYPE_OPT=""
+    SF_OPT=""
+    GOFILE_OPT=""
+    SHUT_OPT=""
+    FORMAT_DISK_OPT=""
+    DEVICE_OPT=""
+}
+
 function prompt_options() {
     local build_cat="${1:-rom}"
     local default_type="userdebug"
     [ "$build_cat" = "recovery" ] && default_type="eng"
+
+    if [ "$CLI_BUILD_MODE" != "true" ]; then
+        BUILD_TYPE_OPT=""
+        SF_OPT=""
+        GOFILE_OPT=""
+        SHUT_OPT=""
+    fi
 
     if [ -z "$BUILD_TYPE_OPT" ]; then
         if [ -t 0 ]; then
@@ -1379,7 +1395,7 @@ function prompt_options() {
 
     if [ -z "$SHUT_OPT" ]; then
         if [ -t 0 ]; then
-            read -rp " Power off immediately when build ends? (y/N; default: n = keep VM running): " auto_in
+            read -rp " Power off immediately when build ends? (y/N; default: n = keep VM running for 30m): " auto_in
             if [[ "$auto_in" =~ ^[Yy]$ ]]; then
                 SHUT_OPT="true"
             else
@@ -1445,6 +1461,7 @@ fi
 function run_build_with_feedback() {
     run_build "$@"
     local rc=$?
+    reset_build_options
     if [ "$rc" -ne 0 ]; then
         echo -e "${RED}[ERROR] Build request was not started. Review the message above, then check VM status or build logs before retrying.${NC}"
         if [ -t 0 ]; then
@@ -1500,7 +1517,7 @@ function run_build() {
     echo -e " SourceForge Upload  : $SF_OPT"
     echo -e " Gofile.io Upload    : $GOFILE_OPT"
     if [ "$SHUT_OPT" = "true" ]; then
-        echo -e " Shutdown Behavior   : Immediate after build"
+        echo -e " Shutdown Behavior   : Power off immediately on success (30m idle fallback on error)"
     else
         echo -e " Shutdown Behavior   : After 30m without build activity"
     fi
@@ -1627,19 +1644,31 @@ else
     echo "Full build output is saved at: $mp/build.log"
 fi
 
-sudo rm -f /run/gcp-build-shutdown-pending 2>/dev/null || true
+# Active build has ended - clear build-active lock so idle watchdog can track inactivity
+sudo rm -f /run/gcp-build-active 2>/dev/null || true
 
-if [ "\$WRAPPER_SHUTDOWN" = 'true' ]; then
+if [ "\$WRAPPER_SHUTDOWN" = 'true' ] && [ \$BUILD_EXIT -eq 0 ]; then
+    sudo rm -f /run/gcp-build-shutdown-pending 2>/dev/null || true
     echo ""
-    echo -e '\033[1;33m>>> Auto-shutdown requested: Powering off VM in 15 seconds...\033[0m'
+    echo -e '\033[1;33m>>> Build succeeded! Auto-shutdown requested: Powering off VM in 15 seconds...\033[0m'
     echo -e '\033[1;33m>>> Press any key to cancel shutdown and keep session open...\033[0m'
     if read -t 15 -n 1 -s -r; then
         echo -e '\n\033[1;32m>>> Auto-shutdown cancelled by user. Session will remain open.\033[0m'
+        date +%s | sudo tee /run/gcp-build-shutdown-pending >/dev/null 2>&1 || true
     else
         echo -e '\n>>> Powering off now.'
-        sudo rm -f /run/gcp-build-active 2>/dev/null || true
         sudo poweroff || true
         exit 0
+    fi
+else
+    # Build failed OR user chose n (keep VM running): arm fresh 30-minute idle timer
+    date +%s | sudo tee /run/gcp-build-shutdown-pending >/dev/null 2>&1 || true
+    echo ""
+    if [ "\$WRAPPER_SHUTDOWN" = 'true' ] && [ \$BUILD_EXIT -ne 0 ]; then
+        echo -e '\033[1;33m>>> [NOTICE] Immediate power-off skipped because the build failed.\033[0m'
+        echo -e '\033[1;36m>>> VM will remain alive for debugging and automatically power off after 30 minutes of idle.\033[0m'
+    else
+        echo -e '\033[1;36m>>> VM will remain alive and automatically power off after 30 minutes of idle.\033[0m'
     fi
 fi
 
@@ -1648,8 +1677,7 @@ echo -e '\033[1;36m============================================================\
 echo -e '\033[1;36m Build session finished (Exit code: '\$BUILD_EXIT'). Session remains open.\033[0m'
 echo -e '\033[1;36m============================================================\033[0m'
 echo -e '\nPress [Enter] to enter interactive bash prompt (or Ctrl+B then D to detach)...'
-read -r || true
-sudo rm -f /run/gcp-build-active 2>/dev/null || true
+read -t 30 -r || true
 exec bash
 EOF_RUNNER
 )
@@ -1658,12 +1686,7 @@ EOF_RUNNER
     runner_b64=$(printf '%s\n' "$runner_script" | base64 | tr -d '\n')
 
     # Reset options so subsequent builds prompt anew
-    BUILD_TYPE_OPT=""
-    SF_OPT=""
-    GOFILE_OPT=""
-    SHUT_OPT=""
-    FORMAT_DISK_OPT=""
-    DEVICE_OPT=""
+    reset_build_options
 
     local upload_script="$SCRIPT_DIR/upload.py"
     if [ -f "$upload_script" ]; then
@@ -2949,6 +2972,7 @@ function menu_manage_machine_type() {
 # Non-interactive CLI flag support
 case "$1" in
     build|build-rom)
+        CLI_BUILD_MODE="true"
         ROM="evox"; VER="16"; DEV="RMX2170"; TYPE=""; SF="false"; GOFILE="true"; SHUT="true"; FORMAT_DISK_OPT="false"
         shift
         while [ "$#" -gt 0 ]; do
@@ -2984,6 +3008,7 @@ case "$1" in
         ;;
 
     recovery|build-recovery)
+        CLI_BUILD_MODE="true"
         FLAVOR="ofrp"; DEV="sm7125"; TYPE=""; SF="false"; GOFILE="true"; SHUT="true"; FORMAT_DISK_OPT="false"
         shift
         while [ "$#" -gt 0 ]; do
@@ -3108,6 +3133,7 @@ function menu_select_rom_device() {
     local rom_label="$3"
 
     while true; do
+        reset_build_options
         clear 2>/dev/null || true
         echo -e "${CYAN}=================================================================${NC}"
         echo -e "${BOLD}  ${rom_label} - Select Target Device${NC}"
@@ -3122,11 +3148,11 @@ function menu_select_rom_device() {
         read -rp " Select device [0-4]: " dev_choice
 
         case "$dev_choice" in
-            1) run_build_with_feedback "$branch" "${rom_prefix}_rmx2170.sh" "${rom_label} - Realme 7 Pro (RMX2170)"; return ;;
-            2) run_build_with_feedback "$branch" "${rom_prefix}_rmx2061.sh" "${rom_label} - Realme 6 Pro (RMX2061)"; return ;;
-            3) run_build_with_feedback "$branch" "${rom_prefix}_rmx3081.sh" "${rom_label} - Realme 8 Pro (RMX3081)"; return ;;
-            4) run_build_with_feedback "$branch" "${rom_prefix}_all.sh"     "${rom_label} - All Devices Batch"; return ;;
-            0|q|Q) return ;;
+            1) run_build_with_feedback "$branch" "${rom_prefix}_rmx2170.sh" "${rom_label} - Realme 7 Pro (RMX2170)"; reset_build_options; return ;;
+            2) run_build_with_feedback "$branch" "${rom_prefix}_rmx2061.sh" "${rom_label} - Realme 6 Pro (RMX2061)"; reset_build_options; return ;;
+            3) run_build_with_feedback "$branch" "${rom_prefix}_rmx3081.sh" "${rom_label} - Realme 8 Pro (RMX3081)"; reset_build_options; return ;;
+            4) run_build_with_feedback "$branch" "${rom_prefix}_all.sh"     "${rom_label} - All Devices Batch"; reset_build_options; return ;;
+            0|q|Q) reset_build_options; return ;;
             *) echo -e "${RED}Invalid choice.${NC}"; sleep 1 ;;
         esac
     done
@@ -3138,6 +3164,7 @@ function menu_select_recovery_device() {
     local rec_label="$2"
 
     while true; do
+        reset_build_options
         clear 2>/dev/null || true
         echo -e "${CYAN}=================================================================${NC}"
         echo -e "${BOLD}  ${rec_label} - Select Target Device${NC}"
@@ -3153,12 +3180,12 @@ function menu_select_recovery_device() {
         read -rp " Select target [0-5]: " dev_choice
 
         case "$dev_choice" in
-            1) DEVICE_OPT="sm7125";  run_build_with_feedback "recovery" "$script_name" "${rec_label} (sm7125 Unified)"; return ;;
-            2) DEVICE_OPT="RMX2170"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 7 Pro (RMX2170)"; return ;;
-            3) DEVICE_OPT="RMX2061"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 6 Pro (RMX2061)"; return ;;
-            4) DEVICE_OPT="RMX3081"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 8 Pro (RMX3081)"; return ;;
-            5) DEVICE_OPT="all";     run_build_with_feedback "recovery" "$script_name" "${rec_label} - All Devices Batch"; return ;;
-            0|q|Q) return ;;
+            1) DEVICE_OPT="sm7125";  run_build_with_feedback "recovery" "$script_name" "${rec_label} (sm7125 Unified)"; reset_build_options; return ;;
+            2) DEVICE_OPT="RMX2170"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 7 Pro (RMX2170)"; reset_build_options; return ;;
+            3) DEVICE_OPT="RMX2061"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 6 Pro (RMX2061)"; reset_build_options; return ;;
+            4) DEVICE_OPT="RMX3081"; run_build_with_feedback "recovery" "$script_name" "${rec_label} - Realme 8 Pro (RMX3081)"; reset_build_options; return ;;
+            5) DEVICE_OPT="all";     run_build_with_feedback "recovery" "$script_name" "${rec_label} - All Devices Batch"; reset_build_options; return ;;
+            0|q|Q) reset_build_options; return ;;
             *) echo -e "${RED}Invalid choice.${NC}"; sleep 1 ;;
         esac
     done
@@ -3171,6 +3198,7 @@ restore_local_terminal
 # Never leave the host terminal stuck in mouse-reporting or alt-screen mode.
 trap 'restore_local_terminal' EXIT
 while true; do
+    reset_build_options
     # Re-assert it on every redraw in case a step re-enabled mouse reporting.
     disable_mouse_reporting
     clear_screen

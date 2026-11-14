@@ -181,12 +181,6 @@ is_busy() {
         return 0
     fi
 
-    # A build with delayed shutdown requested ignores interactive SSH activity;
-    # only a new build resets this 30-minute grace period.
-    if [ -e /run/gcp-build-shutdown-pending ]; then
-        return 1
-    fi
-
     # 2. Check for active interactive user SSH sessions
     # Check if any established TCP connections exist on port 22 (SSH)
     local active_ssh_sockets
