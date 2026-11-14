@@ -1615,15 +1615,19 @@ if [ '$branch' = 'recovery' ] && [ '$mp' != '/mnt/recovery' ]; then
 fi
 echo "BUILD_STATUS: RUNNING (\$BUILD_VARIANT) - \$(date)" > '$mp/build.status' 2>/dev/null || true
 
+stty -ixon -ixoff 2>/dev/null || true
+stty stop undef 2>/dev/null || true
+stty start undef 2>/dev/null || true
+
 BUILD_SCRIPT_TMP="/tmp/gcp_build_script.sh"
 CACHE_BUST="\$(date +%s)"
 if curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "${script_url}?t=\${CACHE_BUST}" | sed -E '/repo[[:space:]]+sync/ { s/[[:space:]]+--progress([[:space:]]|\$)/\1/g; s/[[:space:]]+(-v|--verbose)([[:space:]]|\$)/\2/g; }' > "\$BUILD_SCRIPT_TMP" && [ -s "\$BUILD_SCRIPT_TMP" ]; then
     if command -v script >/dev/null 2>&1; then
-        script -qefc "bash \$BUILD_SCRIPT_TMP" '$mp/build.log'
+        script -qefc "stdbuf -oL -eL bash \$BUILD_SCRIPT_TMP" '$mp/build.log'
         BUILD_EXIT=\$?
     else
         set -o pipefail
-        bash "\$BUILD_SCRIPT_TMP" 2>&1 | tee '$mp/build.log'
+        stdbuf -oL -eL bash "\$BUILD_SCRIPT_TMP" 2>&1 | tee '$mp/build.log'
         BUILD_EXIT=\$?
     fi
 else
@@ -1751,12 +1755,16 @@ EOF_NS
     local tmux_conf tmux_b64
     tmux_conf=$(cat << 'EOF_TC'
 
-# GCP-TMUX-STYLE-V6: high-contrast dark footer, mouse-wheel scrolling, 50k scrollback, build label & DL/UL speed
+# GCP-TMUX-STYLE-V7: high-contrast dark footer, mouse-wheel scrolling, 50k scrollback, build label & DL/UL speed
 # Mouse is ON so the wheel scrolls the pane. To select text natively, hold Option
 # (macOS) while dragging, or press Ctrl+B then m to toggle mouse off/on.
 set -g mouse on
 set -g set-clipboard on
 bind-key m set-option -g mouse
+bind-key -T copy-mode-vi MouseDown1Pane select-pane \; send-keys -X cancel
+bind-key -T copy-mode MouseDown1Pane select-pane \; send-keys -X cancel
+bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
+bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 set -g history-limit 50000
 set -g status-interval 2
 set -g status-style "bg=colour235,fg=colour252"
@@ -1773,7 +1781,7 @@ EOF_TC
 if ! grep -q 'GCP-NET-SPEED-V2' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '$net_b64' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V6' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V7' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,\$d;/# GCP-TMUX-STYLE-V/,\$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '$tmux_b64' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
@@ -1781,6 +1789,10 @@ fi
 tmux set-option -g mouse on 2>/dev/null || true
 tmux set-option -g set-clipboard on 2>/dev/null || true
 tmux bind-key m set-option -g mouse 2>/dev/null || true
+tmux bind-key -T copy-mode-vi MouseDown1Pane select-pane \; send-keys -X cancel 2>/dev/null || true
+tmux bind-key -T copy-mode MouseDown1Pane select-pane \; send-keys -X cancel 2>/dev/null || true
+tmux bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel 2>/dev/null || true
+tmux bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel 2>/dev/null || true
 tmux set-option -g history-limit 50000 2>/dev/null || true
 tmux set-option -g status-interval 2 2>/dev/null || true
 tmux set-option -g status-style 'bg=colour235,fg=colour252' 2>/dev/null || true

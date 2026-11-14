@@ -333,8 +333,14 @@ if ! grep -q "GCP-TMUX-STYLE-V4" /etc/tmux.conf 2>/dev/null; then
   sudo sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   sudo tee -a /etc/tmux.conf > /dev/null << 'EOF_TMUX'
 
-# GCP-TMUX-STYLE-V4: high-contrast dark footer, mouse scrolling, 50k scrollback, build label & DL/UL speed
+# GCP-TMUX-STYLE-V7: high-contrast dark footer, mouse scrolling, 50k scrollback, build label & DL/UL speed
 set -g mouse on
+set -g set-clipboard on
+bind-key m set-option -g mouse
+bind-key -T copy-mode-vi MouseDown1Pane select-pane \; send-keys -X cancel
+bind-key -T copy-mode MouseDown1Pane select-pane \; send-keys -X cancel
+bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
+bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 set -g history-limit 50000
 set -g status-interval 2
 set -g status-style "bg=colour235,fg=colour252"
