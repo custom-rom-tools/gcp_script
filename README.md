@@ -14,7 +14,7 @@ Cloud build automation and management CLI for compiling custom Android ROMs and 
   * OS (Ubuntu 22.04 LTS), toolchains (`openjdk-17-jdk`, `repo`, `ninja`, Python).
   * **Persistent CCache (15 GB)** stored at `~/.ccache` directly on the boot disk, preserved across ROM disk re-creations and version upgrades.
 * **ROM & Recovery Storage Disks (`pd-balanced SSD`)**:
-  * **ROM/Recovery-Specific Disks**: Dedicated storage (`gcp-rom-a16-disk` at `/mnt/a16`, `gcp-rom-a17-disk` at `/mnt/a17`, `gcp-recovery-disk` at `/mnt/recovery`) auto-mounted at boot by `startup.sh`.
+  * **ROM/Recovery-Specific Disks**: Dedicated storage (`gcp-rom-a16-disk` [500GB] at `/mnt/a16`, `gcp-rom-a17-disk` [500GB] at `/mnt/a17`, `gcp-recovery-disk` [250GB] at `/mnt/recovery`) auto-mounted at boot by `startup.sh`.
   * **General Shared Disk (`gcp-general-disk`, 500 GB)**: Fits GCP free-tier's 500 GB SSD limit by sharing one disk across ROM versions and Recoveries. It is **not** mounted at boot; instead, when starting a build, `gcp_menu.sh` checks for a ROM/recovery-specific disk first and falls back to `gcp-general-disk`, unmounting any other mountpoint if needed and mounting it at the target's mountpoint (`/mnt/a16`, `/mnt/a17`, or `/mnt/recovery`).
   * **Format Disk Feature**: Wipe & reformat to clean ext4 anytime via **Disk Manager -> Format Disk**, `./gcp_menu.sh format-disk`, or pass `--format` when starting a build.
   * Isolated workspace folders cleanly named (`/mnt/a16/evox`, `/mnt/a16/los`, `/mnt/a16/lunaris`, `/mnt/recovery/ofrp`, `/mnt/recovery/twrp`).

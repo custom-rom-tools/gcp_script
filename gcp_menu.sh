@@ -295,20 +295,20 @@ function get_disk_meta() {
     if [ "$target_disk" = "gcp-rom-a16-disk" ]; then
         META_DEV_NAME="rom-a16"
         META_DEFAULT_MP="/mnt/a16"
-        META_SIZE_GB=400
-        META_DESC="Dedicated 400GB SSD storage for Android 16 ROM builds"
+        META_SIZE_GB=500
+        META_DESC="Dedicated 500GB SSD storage for Android 16 ROM builds"
         META_IS_GENERAL=0
     elif [ "$target_disk" = "gcp-rom-a17-disk" ]; then
         META_DEV_NAME="rom-a17"
         META_DEFAULT_MP="/mnt/a17"
-        META_SIZE_GB=400
-        META_DESC="Dedicated 400GB SSD storage for Android 17 ROM builds"
+        META_SIZE_GB=500
+        META_DESC="Dedicated 500GB SSD storage for Android 17 ROM builds"
         META_IS_GENERAL=0
     elif [ "$target_disk" = "gcp-recovery-disk" ]; then
         META_DEV_NAME="rom-recovery"
         META_DEFAULT_MP="/mnt/recovery"
-        META_SIZE_GB=400
-        META_DESC="Dedicated 400GB storage for Recovery builds (OFRP + TWRP)"
+        META_SIZE_GB=250
+        META_DESC="Dedicated 250GB storage for Recovery builds (OFRP + TWRP)"
         META_IS_GENERAL=0
     elif [ "$target_disk" = "$GENERAL_DISK" ]; then
         META_DEV_NAME="$GENERAL_DEV_NAME"
@@ -610,7 +610,7 @@ function detach_and_delete_disk() {
         local idx=1
         for d in "${disks[@]}"; do
             local size
-            size=$(gcloud compute disks describe "$d" --zone="$ZONE" --project="$PROJECT" --format="value(sizeGb)" 2>/dev/null || echo "400")
+            size=$(gcloud compute disks describe "$d" --zone="$ZONE" --project="$PROJECT" --format="value(sizeGb)" 2>/dev/null || echo "500")
             local attached
             attached=$(gcloud compute disks describe "$d" --zone="$ZONE" --project="$PROJECT" --format="value(users[].basename().list())" 2>/dev/null || echo "")
             local status_label=""
@@ -2675,9 +2675,9 @@ function menu_manage_disk() {
         echo ""
         echo -e " ${BOLD}[CREATE & LINK]${NC}"
         echo -e "  ${GREEN}1)${NC} Create General Shared Disk (500GB - For all ROMs & Recovery)"
-        echo -e "  ${GREEN}2)${NC} Create A16 Disk (400GB - Dedicated /mnt/a16)"
-        echo -e "  ${GREEN}3)${NC} Create A17 Disk (400GB - Dedicated /mnt/a17)"
-        echo -e "  ${GREEN}4)${NC} Create Recovery Disk (400GB - Dedicated /mnt/recovery)"
+        echo -e "  ${GREEN}2)${NC} Create A16 Disk (500GB - Dedicated /mnt/a16)"
+        echo -e "  ${GREEN}3)${NC} Create A17 Disk (500GB - Dedicated /mnt/a17)"
+        echo -e "  ${GREEN}4)${NC} Create Recovery Disk (250GB - Dedicated /mnt/recovery)"
         echo ""
         echo -e " ${BOLD}[ATTACH / DETACH / FORMAT]${NC}"
         echo -e "  ${BLUE}5)${NC} Attach Disk"
@@ -2699,15 +2699,15 @@ function menu_manage_disk() {
                 read -rp "Press Enter to continue..."
                 ;;
             2)
-                create_and_attach_disk "gcp-rom-a16-disk" 400 "Dedicated 400GB SSD storage for Android 16 ROM builds"
+                create_and_attach_disk "gcp-rom-a16-disk" 500 "Dedicated 500GB SSD storage for Android 16 ROM builds"
                 read -rp "Press Enter to continue..."
                 ;;
             3)
-                create_and_attach_disk "gcp-rom-a17-disk" 400 "Dedicated 400GB SSD storage for Android 17 ROM builds"
+                create_and_attach_disk "gcp-rom-a17-disk" 500 "Dedicated 500GB SSD storage for Android 17 ROM builds"
                 read -rp "Press Enter to continue..."
                 ;;
             4)
-                create_and_attach_disk "gcp-recovery-disk" 400 "Dedicated 400GB storage for Recovery builds (OFRP + TWRP)"
+                create_and_attach_disk "gcp-recovery-disk" 250 "Dedicated 250GB storage for Recovery builds (OFRP + TWRP)"
                 read -rp "Press Enter to continue..."
                 ;;
             5)
