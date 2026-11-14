@@ -152,18 +152,19 @@ for dev in "${TARGET_DEVICES[@]}"; do
     BUILD_DATE=$(date +%Y%m%d)
 
     if [ -s "$local_out/recovery.img" ]; then
-        existing_img=$(find "$local_out" -maxdepth 1 -name "TWRP*.img" -size +0c | head -n 1)
-        if [ -z "$existing_img" ]; then
-            mv -v "$local_out/recovery.img" "$local_out/TWRP-12.1-${BUILD_DATE}-Unofficial-${dev}.img"
-        fi
+        mv -vf "$local_out/recovery.img" "$local_out/TWRP-12.1-${BUILD_DATE}-Unofficial-${dev}.img"
     fi
 
     if [ -s "$local_out/recovery.zip" ]; then
-        existing_zip=$(find "$local_out" -maxdepth 1 -name "TWRP*.zip" -size +0c | head -n 1)
-        if [ -z "$existing_zip" ]; then
-            mv -v "$local_out/recovery.zip" "$local_out/TWRP-12.1-${BUILD_DATE}-Unofficial-${dev}.zip"
-        fi
+        mv -vf "$local_out/recovery.zip" "$local_out/TWRP-12.1-${BUILD_DATE}-Unofficial-${dev}.zip"
     fi
+
+    for z in "$local_out"/TWRP*.zip "$local_out"/twrp*.zip; do
+        if [ -s "$z" ] && [[ "$z" != *"$BUILD_DATE"* ]]; then
+            mv -vf "$z" "$local_out/TWRP-12.1-${BUILD_DATE}-Unofficial-${dev}.zip"
+            break
+        fi
+    done
 
     curl -sLf "$UPLOAD_SCRIPT_URL" | python3 - "${dev^^}/Recovery/TWRP" "${dev}" "recovery"
     SUCCESS_DEVS+=("$dev")

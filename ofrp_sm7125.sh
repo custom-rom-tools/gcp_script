@@ -163,18 +163,19 @@ for dev in "${TARGET_DEVICES[@]}"; do
     BUILD_DATE=$(date +%Y%m%d)
 
     if [ -s "$local_out/recovery.img" ]; then
-        existing_img=$(find "$local_out" -maxdepth 1 -name "OrangeFox*.img" -size +0c | head -n 1)
-        if [ -z "$existing_img" ]; then
-            mv -v "$local_out/recovery.img" "$local_out/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.img"
-        fi
+        mv -vf "$local_out/recovery.img" "$local_out/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.img"
     fi
 
     if [ -s "$local_out/recovery.zip" ]; then
-        existing_zip=$(find "$local_out" -maxdepth 1 -name "OrangeFox*.zip" -size +0c | head -n 1)
-        if [ -z "$existing_zip" ]; then
-            mv -v "$local_out/recovery.zip" "$local_out/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.zip"
-        fi
+        mv -vf "$local_out/recovery.zip" "$local_out/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.zip"
     fi
+
+    for z in "$local_out"/OrangeFox*.zip; do
+        if [ -s "$z" ] && [[ "$z" != *"$BUILD_DATE"* ]]; then
+            mv -vf "$z" "$local_out/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.zip"
+            break
+        fi
+    done
 
     curl -sLf "$UPLOAD_SCRIPT_URL" | python3 - "${dev^^}/Recovery/OrangeFox" "${dev}" "recovery"
     SUCCESS_DEVS+=("$dev")

@@ -176,18 +176,19 @@ build_orangefox() {
                 local BUILD_DATE=$(date +%Y%m%d)
 
                 if [ -s "$out_dir/recovery.img" ]; then
-                    local existing_img=$(find "$out_dir" -maxdepth 1 -name "OrangeFox*.img" -size +0c | head -n 1)
-                    if [ -z "$existing_img" ]; then
-                        mv -v "$out_dir/recovery.img" "$out_dir/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.img"
-                    fi
+                    mv -vf "$out_dir/recovery.img" "$out_dir/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.img"
                 fi
 
                 if [ -s "$out_dir/recovery.zip" ]; then
-                    local existing_zip=$(find "$out_dir" -maxdepth 1 -name "OrangeFox*.zip" -size +0c | head -n 1)
-                    if [ -z "$existing_zip" ]; then
-                        mv -v "$out_dir/recovery.zip" "$out_dir/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.zip"
-                    fi
+                    mv -vf "$out_dir/recovery.zip" "$out_dir/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.zip"
                 fi
+
+                for z in "$out_dir"/OrangeFox*.zip; do
+                    if [ -s "$z" ] && [[ "$z" != *"$BUILD_DATE"* ]]; then
+                        mv -vf "$z" "$out_dir/OrangeFox-R12.0-${BUILD_DATE}-Unofficial-${dev}.zip"
+                        break
+                    fi
+                done
 
                 local UPLOAD_SUBDIR="${dev^^}/Recovery/OrangeFox"
                 curl -sLf "$UPLOAD_SCRIPT_URL" | python3 - "${UPLOAD_SUBDIR}" "${dev}" "recovery"
@@ -306,18 +307,19 @@ build_twrp() {
                 local BUILD_DATE=$(date +%Y%m%d)
 
                 if [ -s "$out_dir/recovery.img" ]; then
-                    local existing_img=$(find "$out_dir" -maxdepth 1 -name "TWRP*.img" -size +0c | head -n 1)
-                    if [ -z "$existing_img" ]; then
-                        mv -v "$out_dir/recovery.img" "$out_dir/TWRP-3.7.1_${BUILD_DATE}-Unofficial-${dev}.img"
-                    fi
+                    mv -vf "$out_dir/recovery.img" "$out_dir/TWRP-12.1-${BUILD_DATE}-Unofficial-${dev}.img"
                 fi
 
                 if [ -s "$out_dir/recovery.zip" ]; then
-                    local existing_zip=$(find "$out_dir" -maxdepth 1 -name "TWRP*.zip" -size +0c | head -n 1)
-                    if [ -z "$existing_zip" ]; then
-                        mv -v "$out_dir/recovery.zip" "$out_dir/TWRP-3.7.1_${BUILD_DATE}-Unofficial-${dev}.zip"
-                    fi
+                    mv -vf "$out_dir/recovery.zip" "$out_dir/TWRP-12.1-${BUILD_DATE}-Unofficial-${dev}.zip"
                 fi
+
+                for z in "$out_dir"/TWRP*.zip "$out_dir"/twrp*.zip; do
+                    if [ -s "$z" ] && [[ "$z" != *"$BUILD_DATE"* ]]; then
+                        mv -vf "$z" "$out_dir/TWRP-12.1-${BUILD_DATE}-Unofficial-${dev}.zip"
+                        break
+                    fi
+                done
 
                 local UPLOAD_SUBDIR="${dev^^}/Recovery/TWRP"
                 curl -sLf "$UPLOAD_SCRIPT_URL" | python3 - "${UPLOAD_SUBDIR}" "${dev}" "recovery"
