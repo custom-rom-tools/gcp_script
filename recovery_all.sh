@@ -190,7 +190,7 @@ build_orangefox() {
                 fi
 
                 local UPLOAD_SUBDIR="${dev^^}/Recovery/OrangeFox"
-                curl -sLf "$UPLOAD_SCRIPT_URL" | python3 - "${UPLOAD_SUBDIR}" "${dev}" "recovery"
+                curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "${UPLOAD_SCRIPT_URL}?t=$(date +%s)" | python3 - "${UPLOAD_SUBDIR}" "${dev}" "recovery"
             else
                 echo ">>> [FAILED] OrangeFox Recovery compilation failed for $dev! Skipping upload."
                 any_fail=1
@@ -320,7 +320,7 @@ build_twrp() {
                 fi
 
                 local UPLOAD_SUBDIR="${dev^^}/Recovery/TWRP"
-                curl -sLf "$UPLOAD_SCRIPT_URL" | python3 - "${UPLOAD_SUBDIR}" "${dev}" "recovery"
+                curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "${UPLOAD_SCRIPT_URL}?t=$(date +%s)" | python3 - "${UPLOAD_SUBDIR}" "${dev}" "recovery"
             else
                 echo ">>> [FAILED] TWRP Recovery compilation failed for $dev! Skipping upload."
                 any_fail=1

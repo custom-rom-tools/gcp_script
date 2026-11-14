@@ -168,7 +168,7 @@ for dev in "${TARGET_DEVICES[@]}"; do
         fi
     fi
 
-    curl -sLf "$UPLOAD_SCRIPT_URL" | python3 - "${dev^^}/Recovery/TWRP" "${dev}" "recovery"
+    curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "${UPLOAD_SCRIPT_URL}?t=$(date +%s)" | python3 - "${dev^^}/Recovery/TWRP" "${dev}" "recovery"
     SUCCESS_DEVS+=("$dev")
 done
 set -e
