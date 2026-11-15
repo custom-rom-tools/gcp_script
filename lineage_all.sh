@@ -109,15 +109,15 @@ build_device() {
         echo "------------------------------------------------------------"
         curl -sLf "$CLEAN_SCRIPT_URL" | python3
         SYNC_OK=0
-        for sync_jobs in $(nproc --all) 8 4 2; do
+        for attempt in 1 2 3 4; do
             if [ -t 2 ]; then
-                repo sync -c -j"${sync_jobs}" --force-sync --no-clone-bundle --no-tags && { SYNC_OK=1; break; }
+                repo sync -c --no-clone-bundle --no-tags --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
             elif command -v script >/dev/null 2>&1; then
-                script -qefc "repo sync -c -j${sync_jobs} --force-sync --no-clone-bundle --no-tags" /dev/null && { SYNC_OK=1; break; }
+                script -qefc "repo sync -c --no-clone-bundle --no-tags --force-sync -j\$(nproc --all)" /dev/null && { SYNC_OK=1; break; }
             else
-                repo sync -c -j"${sync_jobs}" --force-sync --no-clone-bundle --no-tags && { SYNC_OK=1; break; }
+                repo sync -c --no-clone-bundle --no-tags --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
             fi
-            echo ">>> [WARN] repo sync failed (possible HTTP 429 rate limit); retrying in 60s..."
+            echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit); retrying in 60s..."
             sleep 60
         done
         [ "$SYNC_OK" -eq 1 ]
