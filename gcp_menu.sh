@@ -2485,6 +2485,59 @@ function setup_environment() {
     upload_sf_key
 }
 
+function configure_git_dummy_identity() {
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${BOLD} Configure Git Dummy Identity on VM (Avoid 429 Rate Limits)${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+
+    if ! require_vm_running "configure Git identity"; then
+        return 1
+    fi
+
+    local cur_name cur_email
+    cur_name=$(vm_exec "git config --global user.name 2>/dev/null || true")
+    cur_email=$(vm_exec "git config --global user.email 2>/dev/null || true")
+    echo -e " Current user.name : ${YELLOW}${cur_name:-[Not Set]}${NC}"
+    echo -e " Current user.email: ${YELLOW}${cur_email:-[Not Set]}${NC}\n"
+
+    local rand_id
+    rand_id=$(head -c 4 /dev/urandom 2>/dev/null | xxd -p 2>/dev/null || echo "$((RANDOM % 9000 + 1000))")
+    local def_name="Android Builder"
+    local def_email="builder-${rand_id}@android-build.org"
+
+    echo -e " Recommended Dummy Identity:"
+    echo -e "   Name : ${GREEN}${def_name}${NC}"
+    echo -e "   Email: ${GREEN}${def_email}${NC}\n"
+
+    read -rp "Use recommended dummy identity? [Y/n] (or 'c' for custom): " choice
+    local target_name="$def_name"
+    local target_email="$def_email"
+
+    if [[ "$choice" =~ ^[Cc]$ ]]; then
+        read -rp "Enter dummy user.name : " custom_name
+        read -rp "Enter dummy user.email: " custom_email
+        target_name="${custom_name:-$def_name}"
+        target_email="${custom_email:-$def_email}"
+    elif [[ "$choice" =~ ^[Nn]$ ]]; then
+        echo -e "${YELLOW}Cancelled without changes.${NC}"
+        read -rp "Press Enter to return to menu..."
+        return 0
+    fi
+
+    run_step "Setting global Git user.name on VM" \
+        vm_exec "git config --global user.name '$target_name'"
+    run_step "Setting global Git user.email on VM" \
+        vm_exec "git config --global user.email '$target_email'"
+    run_step "Setting global Git color.ui on VM" \
+        vm_exec "git config --global color.ui auto"
+
+    echo -e "\n${GREEN}>>> Git identity successfully configured on $INSTANCE:${NC}"
+    echo -e "    user.name  = $target_name"
+    echo -e "    user.email = $target_email"
+    echo ""
+    read -rp "Press Enter to return to menu..."
+}
+
 function menu_tools() {
     while true; do
         clear 2>/dev/null || true
@@ -2494,9 +2547,10 @@ function menu_tools() {
         echo -e " ${BOLD}1)${NC} Run Environment Setup (Packages, repo, ccache)"
         echo -e " ${BOLD}2)${NC} Upload SourceForge SSH Key (~/.ssh/crave_sf)"
         echo -e " ${BOLD}3)${NC} Deploy 30m Auto-Idle Shutdown Watchdog"
+        echo -e " ${BOLD}4)${NC} Configure Git Dummy Identity (Avoid 429 Rate Limits)"
         echo -e " ${BOLD}0)${NC} Back to Main Menu"
         echo -e "${CYAN}=================================================================${NC}"
-        read -rp "Select option [0-3]: " t_choice
+        read -rp "Select option [0-4]: " t_choice
 
         case "$t_choice" in
             1) setup_environment; break ;;
@@ -2515,6 +2569,7 @@ function menu_tools() {
                 fi
                 read -rp "Press Enter to return to menu..."
                 ;;
+            4) configure_git_dummy_identity; break ;;
             0|*) break ;;
         esac
     done
@@ -3056,6 +3111,7 @@ case "$1" in
 
     setup) setup_environment; exit 0 ;;
     upload-key) upload_sf_key; exit 0 ;;
+    git-config|dummy-git) configure_git_dummy_identity; exit 0 ;;
     create-disk) create_and_attach_disk "$2" "$3" "$4"; exit 0 ;;
     delete-disk) detach_and_delete_disk "$2"; exit 0 ;;
     attach-disk) attach_disk_action "$2"; exit 0 ;;

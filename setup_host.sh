@@ -68,8 +68,12 @@ sudo mv /tmp/repo /usr/local/bin/repo
 echo "============================================================"
 echo " [3/5] Configuring Git & CCache on Boot Disk..."
 echo "============================================================"
-git config --global user.name "Nikhil Suryavanshi"
-git config --global user.email "nikhilpal2705@gmail.com"
+if [ -z "$(git config --global user.name 2>/dev/null)" ]; then
+    git config --global user.name "Android Builder"
+fi
+if [ -z "$(git config --global user.email 2>/dev/null)" ]; then
+    git config --global user.email "android-builder@noreply.github.com"
+fi
 git config --global color.ui auto
 
 # Persistent ccache on the boot disk.  Keep the cap small: the boot disk
