@@ -241,6 +241,32 @@ def generate_sha256sum(file_path: Path) -> Path | None:
         return None
 
 
+def generate_md5sum(file_path: Path) -> Path | None:
+    """Generate <file_path>.md5sum companion if not already present."""
+    if not file_path.is_file() or file_path.stat().st_size == 0:
+        return None
+    if file_path.suffix.lower() in [".sha256sum", ".sha256", ".md5sum", ".md5", ".json", ".txt"]:
+        return None
+
+    for ext in [".md5sum", ".md5"]:
+        existing = file_path.with_name(f"{file_path.name}{ext}")
+        if existing.exists() and existing.stat().st_size > 0:
+            return existing
+
+    sum_file = file_path.with_name(f"{file_path.name}.md5sum")
+    try:
+        h = hashlib.md5()
+        with file_path.open("rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
+        digest = h.hexdigest()
+        sum_file.write_text(f"{digest}  {file_path.name}\n", encoding="utf-8")
+        return sum_file
+    except Exception as e:
+        print(f">>> [WARN] Could not generate md5sum for {file_path.name}: {e}")
+        return None
+
+
 def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_device: str = "") -> Path:
     """
     Ensure OFRP and TWRP recovery artifacts (.img, .zip) have an 8-digit timestamp (YYYYMMDD).
@@ -365,6 +391,9 @@ def resolve_artifacts(raw_inputs: list[str], build_type: str = "rom", remote_sub
                     sha_comp = generate_sha256sum(cand)
                     if sha_comp and sha_comp.is_file() and sha_comp not in targets:
                         targets.append(sha_comp)
+                    md5_comp = generate_md5sum(cand)
+                    if md5_comp and md5_comp.is_file() and md5_comp not in targets:
+                        targets.append(md5_comp)
                     for comp in find_companions(cand):
                         if comp.is_file() and comp not in targets:
                             targets.append(comp)
@@ -381,6 +410,9 @@ def resolve_artifacts(raw_inputs: list[str], build_type: str = "rom", remote_sub
             sha_comp = generate_sha256sum(p)
             if sha_comp and sha_comp.is_file() and sha_comp not in targets:
                 targets.append(sha_comp)
+            md5_comp = generate_md5sum(p)
+            if md5_comp and md5_comp.is_file() and md5_comp not in targets:
+                targets.append(md5_comp)
             for comp in find_companions(p):
                 if comp.is_file() and comp not in targets:
                     targets.append(comp)
@@ -457,48 +489,117 @@ def get_gofile_server() -> str:
     return "store3"
 
 
-def upload_fallback(files: list[Path]) -> list[tuple[str, str, str]]:
-    """Uploads cooked artifacts to Gofile.io with Filebin fallback, returning (provider, filename, url) entries."""
-    print("\n>>> [GOFILE] Generating direct download links via Gofile.io...")
+def upload_fallback(files: list[Path], remote_subdir: str = "") -> list[tuple[str, str, str]]:
+    """
+    Uploads cooked artifacts to Gofile.io with Filebin fallback.
+    All files from the build are uploaded into a single shared folder on Gofile
+    (or single bin on Filebin), producing a single link containing all artifacts
+    (ROM/recovery zip, img, sha256, md5, etc.).
+    """
+    if not files:
+        return []
+
+    print("\n>>> [GOFILE] Generating direct download links via Gofile.io (Single Folder Mode)...")
     gf_server = get_gofile_server()
     results: list[tuple[str, str, str]] = []
+
+    # Identify primary artifact for naming the folder
+    main_art = next((f for f in files if f.suffix.lower() in [".zip", ".img"]), files[0])
+    folder_name = main_art.stem
+
+    gofile_folder_id: str | None = None
+    gofile_folder_link: str | None = None
+    gofile_token: str | None = os.environ.get("GOFILE_TOKEN", "").strip() or None
+    gofile_uploaded: list[Path] = []
+    failed_files: list[Path] = []
 
     for f in files:
         size_mb = f.stat().st_size / (1024 * 1024)
         print(f">>> Uploading {f.name} ({size_mb:.2f} MB)...")
-        link = None
+        file_uploaded = False
 
         for attempt in range(1, 3):
             tmp_resp = Path(f"/tmp/gofile_resp_{int(time.time())}_{f.name}.json")
             try:
                 cmd = [
                     "curl",
+                    "-s",
                     "-F", f"file=@{f}",
+                ]
+                if gofile_folder_id:
+                    cmd.extend(["-F", f"folderId={gofile_folder_id}"])
+                if gofile_token:
+                    cmd.extend(["-H", f"Authorization: Bearer {gofile_token}"])
+
+                cmd.extend([
                     f"https://{gf_server}.gofile.io/contents/uploadfile",
                     "-o", str(tmp_resp),
-                ]
+                ])
+
                 res = subprocess.run(cmd, timeout=1200)
                 if res.returncode == 0 and tmp_resp.exists():
                     resp = json.loads(tmp_resp.read_text())
                     if resp.get("status") == "ok":
-                        link = resp.get("data", {}).get("downloadPage")
-                        if link:
-                            print(f"\n✅ Download link ({f.name}) [Gofile]: {link}")
-                            results.append(("Gofile", f.name, link))
-                            break
+                        data = resp.get("data", {})
+                        if not gofile_folder_id:
+                            gofile_folder_id = data.get("parentFolder")
+                            gofile_folder_link = data.get("downloadPage")
+                            if not gofile_token:
+                                gofile_token = data.get("guestToken")
+                            # Set descriptive folder name on Gofile
+                            if gofile_folder_id and gofile_token:
+                                try:
+                                    body = json.dumps({"attribute": "name", "attributeValue": folder_name})
+                                    subprocess.run([
+                                        "curl", "-s", "-X", "PUT",
+                                        f"https://api.gofile.io/contents/{gofile_folder_id}/update",
+                                        "-H", f"Authorization: Bearer {gofile_token}",
+                                        "-H", "Content-Type: application/json",
+                                        "-d", body,
+                                    ], capture_output=True, timeout=15)
+                                except Exception:
+                                    pass
+
+                        file_uploaded = True
+                        gofile_uploaded.append(f)
+                        print(f"    ✔ Uploaded {f.name} into Gofile folder")
+                        break
+                    else:
+                        print(f">>> [WARN] Gofile API returned status: {resp.get('status')}")
             except Exception as e:
                 if attempt == 2:
-                    print(f"\n>>> [WARN] Gofile upload exception: {e}")
+                    print(f">>> [WARN] Gofile upload exception for {f.name}: {e}")
             finally:
                 tmp_resp.unlink(missing_ok=True)
 
-        if not link:
-            print(f"\n>>> [WARN] Gofile failed for {f.name}. Attempting Filebin fallback...")
+        if not file_uploaded:
+            failed_files.append(f)
+
+    if gofile_uploaded and gofile_folder_link:
+        print("\n" + "=" * 64)
+        print(f"✅ [GOFILE SINGLE LINK] All build files uploaded to:")
+        print(f"   {gofile_folder_link}")
+        print(f"   Folder: {folder_name} ({len(gofile_uploaded)} files)")
+        for uf in gofile_uploaded:
+            sz = uf.stat().st_size / (1024 * 1024)
+            print(f"     - {uf.name} ({sz:.2f} MB)")
+        print("=" * 64)
+        for uf in gofile_uploaded:
+            results.append(("Gofile", uf.name, gofile_folder_link))
+        results.append(("Gofile", f"{folder_name} (All {len(gofile_uploaded)} files)", gofile_folder_link))
+
+    # Filebin fallback for any files that failed Gofile upload
+    if failed_files:
+        print(f"\n>>> [WARN] {len(failed_files)} file(s) failed Gofile upload. Attempting Filebin fallback...")
+        bin_id = f"realme-atoll-{folder_name[:24]}-{int(time.time())}".lower().replace("_", "-").replace(" ", "-")
+        fb_uploaded: list[Path] = []
+
+        for f in failed_files:
             tmp_fb = Path(f"/tmp/filebin_resp_{int(time.time())}_{f.name}.json")
             try:
-                bin_id = f"realme-atoll-{int(time.time())}"
                 cmd = [
                     "curl",
+                    "-s",
                     "-X", "POST",
                     "--data-binary", f"@{f}",
                     "-H", f"filename: {f.name}",
@@ -509,13 +610,22 @@ def upload_fallback(files: list[Path]) -> list[tuple[str, str, str]]:
                 if res.returncode == 0 and tmp_fb.exists():
                     fb_data = json.loads(tmp_fb.read_text())
                     if "file" in fb_data:
-                        link = f"https://filebin.net/{bin_id}/{f.name}"
-                        print(f"\n✅ Download link ({f.name}) [Filebin]: {link}")
-                        results.append(("Filebin", f.name, link))
+                        fb_uploaded.append(f)
+                        print(f"    ✔ Uploaded {f.name} to Filebin bin {bin_id}")
             except Exception as e:
-                print(f"\n>>> [WARN] Filebin fallback exception: {e}")
+                print(f">>> [WARN] Filebin fallback exception for {f.name}: {e}")
             finally:
                 tmp_fb.unlink(missing_ok=True)
+
+        if fb_uploaded:
+            bin_link = f"https://filebin.net/{bin_id}"
+            print("\n" + "=" * 64)
+            print(f"✅ [FILEBIN SINGLE LINK] Files uploaded to:")
+            print(f"   {bin_link}")
+            print("=" * 64)
+            for uf in fb_uploaded:
+                results.append(("Filebin", uf.name, bin_link))
+            results.append(("Filebin", f"{folder_name} (All {len(fb_uploaded)} files)", bin_link))
 
     return results
 
@@ -582,7 +692,7 @@ def main():
 
     skip_gofile = os.environ.get("SKIP_GOFILE", "").strip().lower() in ("1", "true", "yes")
     if not skip_gofile:
-        uploaded_links.extend(upload_fallback(files))
+        uploaded_links.extend(upload_fallback(files, remote_subdir=remote_subdir))
 
     record_links(uploaded_links, remote_subdir)
 
