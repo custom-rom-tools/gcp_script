@@ -11,8 +11,15 @@ INSTANCE="rom-build-farm"
 ZONE="us-central1-a"
 PROJECT="project-53211141-f92a-48c1-b88"
 # Resolve paths relative to this script, even when setup_environment() was
-# skipped or the menu was launched from another working directory.
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# skipped, launched from another working directory, or invoked through a symlink.
+_source="${BASH_SOURCE[0]:-$0}"
+while [ -h "$_source" ]; do
+    _dir="$(cd -P "$(dirname "$_source")" && pwd)"
+    _source="$(readlink "$_source")"
+    [[ $_source != /* ]] && _source="$_dir/$_source"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_source")" && pwd)"
+unset _source _dir
 LOCAL_OUT_DIR="$HOME/Downloads"
 LOCAL_LINKS_FILE="$HOME/.gcp_upload_links.log"
 GENERAL_DISK="gcp-general-disk"
@@ -1621,7 +1628,7 @@ stty start undef 2>/dev/null || true
 
 BUILD_SCRIPT_TMP="/tmp/gcp_build_script.sh"
 CACHE_BUST="\$(date +%s)"
-if curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "${script_url}?t=\${CACHE_BUST}" | sed -E '/repo[[:space:]]+sync/ { s/[[:space:]]+--progress([[:space:]]|\$)/\1/g; s/[[:space:]]+(-v|--verbose)([[:space:]]|\$)/\2/g; }' > "\$BUILD_SCRIPT_TMP" && [ -s "\$BUILD_SCRIPT_TMP" ]; then
+if curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "${script_url}?t=\${CACHE_BUST}" | sed -E '/repo[[:space:]]+sync/ { s/[[:space:]]+--progress([[:space:]]|\$)/\1/g; s/[[:space:]]+(-v|--verbose)([[:space:]]|\$)/\2/g; /--fail-fast/! s/(repo[[:space:]]+sync)/\1 --fail-fast/; }' > "\$BUILD_SCRIPT_TMP" && [ -s "\$BUILD_SCRIPT_TMP" ]; then
     if command -v script >/dev/null 2>&1; then
         script -qefc "stdbuf -oL -eL bash \$BUILD_SCRIPT_TMP" '$mp/build.log'
         BUILD_EXIT=\$?
@@ -1693,6 +1700,18 @@ EOF_RUNNER
     reset_build_options
 
     local upload_script="$SCRIPT_DIR/upload.py"
+    if [ ! -f "$upload_script" ]; then
+        if [ -f "/Volumes/Storage/rom/gcp_script/upload.py" ]; then
+            upload_script="/Volumes/Storage/rom/gcp_script/upload.py"
+        elif [ -f "$HOME/.cache/gcp_script/upload.py" ]; then
+            upload_script="$HOME/.cache/gcp_script/upload.py"
+        else
+            mkdir -p "$HOME/.cache/gcp_script"
+            if curl -sLf "https://raw.githubusercontent.com/custom-rom-tools/gcp_script/main/upload.py" -o "$HOME/.cache/gcp_script/upload.py" 2>/dev/null; then
+                upload_script="$HOME/.cache/gcp_script/upload.py"
+            fi
+        fi
+    fi
     if [ -f "$upload_script" ]; then
         vm_scp "$upload_script" "$USER@$INSTANCE:~/upload.py" || \
             echo -e "${YELLOW}>>> [WARN] Could not refresh ~/upload.py on the VM; build will continue with the existing uploader.${NC}"
