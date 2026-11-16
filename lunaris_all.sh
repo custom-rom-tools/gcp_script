@@ -117,8 +117,9 @@ build_device() {
             else
                 repo sync -c --no-clone-bundle --no-tags --fail-fast --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
             fi
-            echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit); retrying in 60s..."
+            echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit or stale lock); retrying in 60s..."
             sleep 60
+            curl -sLf "$CLEAN_SCRIPT_URL" | python3
         done
         [ "$SYNC_OK" -eq 1 ]
         curl -sLf "$PATCH_SCRIPT_URL" | python3
