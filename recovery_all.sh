@@ -45,6 +45,7 @@ UPLOAD_SUBDIR_BASE="${DEVICE^^}/Recovery"
 # Helper Scripts URLs
 SCRIPT_BRANCH="${SCRIPT_BRANCH:-recovery}"
 UPLOAD_SCRIPT_URL="https://raw.githubusercontent.com/custom-rom-tools/gcp_script/main/upload.py"
+CLEAN_SCRIPT_URL="https://raw.githubusercontent.com/custom-rom-tools/gcp_script/${SCRIPT_BRANCH}/clean.py"
 
 # =============================================================================
 # SCRIPT LOGIC
@@ -107,6 +108,7 @@ build_orangefox() {
 
     echo ">> Running repo sync for OrangeFox source tree (progress shown below)..."
     export PYTHONUNBUFFERED=1
+    curl -sLf "$CLEAN_SCRIPT_URL" | python3
     SYNC_OK=0
     for attempt in 1 2 3 4; do
         if [ -t 2 ]; then
@@ -116,8 +118,9 @@ build_orangefox() {
         else
             repo sync -c --no-clone-bundle --no-tags --fail-fast --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
         fi
-        echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit); retrying in 60s..."
+        echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit or stale lock); retrying in 60s..."
         sleep 60
+        curl -sLf "$CLEAN_SCRIPT_URL" | python3
     done
     [ "$SYNC_OK" -eq 1 ]
     ensure_qcom_dependencies
@@ -237,6 +240,7 @@ build_twrp() {
 
     echo ">> Running repo sync for TWRP source tree (progress shown below)..."
     export PYTHONUNBUFFERED=1
+    curl -sLf "$CLEAN_SCRIPT_URL" | python3
     SYNC_OK=0
     for attempt in 1 2 3 4; do
         if [ -t 2 ]; then
@@ -246,8 +250,9 @@ build_twrp() {
         else
             repo sync -c --no-clone-bundle --no-tags --fail-fast --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
         fi
-        echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit); retrying in 60s..."
+        echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit or stale lock); retrying in 60s..."
         sleep 60
+        curl -sLf "$CLEAN_SCRIPT_URL" | python3
     done
     [ "$SYNC_OK" -eq 1 ]
     ensure_qcom_dependencies

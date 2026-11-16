@@ -35,6 +35,7 @@ UPLOAD_SUBDIR="${DEVICE^^}/Recovery/TWRP"
 
 SCRIPT_BRANCH="${SCRIPT_BRANCH:-recovery}"
 UPLOAD_SCRIPT_URL="https://raw.githubusercontent.com/custom-rom-tools/gcp_script/main/upload.py"
+CLEAN_SCRIPT_URL="https://raw.githubusercontent.com/custom-rom-tools/gcp_script/${SCRIPT_BRANCH}/clean.py"
 
 # =============================================================================
 # SCRIPT LOGIC
@@ -70,6 +71,7 @@ echo "=============================="
 echo " [3/6] Syncing source via crave resync..."
 echo "=============================="
 export PYTHONUNBUFFERED=1
+curl -sLf "$CLEAN_SCRIPT_URL" | python3
 SYNC_OK=0
 for attempt in 1 2 3 4; do
     if [ -t 2 ]; then
@@ -79,8 +81,9 @@ for attempt in 1 2 3 4; do
     else
         repo sync -c --no-clone-bundle --no-tags --fail-fast --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
     fi
-    echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit); retrying in 60s..."
+    echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit or stale lock); retrying in 60s..."
     sleep 60
+    curl -sLf "$CLEAN_SCRIPT_URL" | python3
 done
 [ "$SYNC_OK" -eq 1 ]
 
