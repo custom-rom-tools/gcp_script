@@ -121,13 +121,42 @@ def find_companions(artifact: Path) -> list[Path]:
 
 
 def resolve_target_path(item: str) -> Path:
-    """Resolves an input item to a Path, checking direct path or out/target/product."""
+    """Resolves an input item to a Path, checking direct path, cwd, or out/target/product."""
     p = Path(item)
     if p.exists():
         return p
 
+    # If user passed a device name while already inside that device's directory
+    cwd = Path.cwd().resolve()
+    if cwd.name.upper() == item.upper() or cwd.name.lower() == item.lower():
+        return cwd
+
+    # Check relative out/target/product
     base = Path("out/target/product")
     for cand in [base / item, base / item.lower(), base / item.upper()]:
+        if cand.is_dir():
+            return cand
+
+    # Walk up parent directories to find out/target/product/<item>
+    cur = cwd
+    while cur != cur.parent:
+        cand = cur / "out" / "target" / "product" / item
+        if cand.is_dir():
+            return cand
+        cand = cur / item
+        if cand.is_dir() and (cur / "out").is_dir():
+            return cand
+        cur = cur.parent
+
+    # Check common VM build mount paths
+    for mnt_base in [
+        Path("/mnt/a17/evox"),
+        Path("/mnt/a16/evox"),
+        Path("/mnt/recovery/ofrp"),
+        Path("/mnt/recovery/twrp"),
+        Path("/mnt/rom"),
+    ]:
+        cand = mnt_base / "out" / "target" / "product" / item
         if cand.is_dir():
             return cand
 
@@ -138,9 +167,9 @@ def is_rom_zip(p: Path) -> bool:
     """Validate whether a zip file is a cooked ROM installer."""
     name = p.name.lower()
     stem = p.stem.lower()
-    if any(ign in name for ign in ["target_files", "target-files", "symbols", "orangefox", "twrp"]):
+    if any(ign in name for ign in ["target_files", "target-files", "symbols", "orangefox", "ofrp", "twrp"]):
         return False
-    if any(ota in stem for ota in ["-ota", "_ota", ".ota"]) or stem.endswith("ota") or stem.startswith("ota"):
+    if any(ign in stem for ign in ["incremental", "ota_update", "ota-package"]):
         return False
     return True
 
@@ -162,13 +191,15 @@ def discover_candidates(search_dir: Path, build_type: str, remote_subdir: str = 
             elif any(k in sub_lower for k in ["twrp"]):
                 rec_flavor = "twrp"
 
+            flavor_keys = ["orangefox", "ofrp"] if rec_flavor == "orangefox" else ["twrp"]
+
             zips = [
                 z for z in all_zips
-                if any(k in z.name.lower() for k in ["orangefox", "twrp", "recovery"])
+                if any(k in z.name.lower() for k in ["orangefox", "ofrp", "twrp", "recovery"])
                 and not any(ign in z.name.lower() for ign in ["target_files", "target-files", "symbols", "ota_update"])
             ]
             if rec_flavor:
-                flavored = [z for z in zips if rec_flavor in z.name.lower()]
+                flavored = [z for z in zips if any(fk in z.name.lower() for fk in flavor_keys)]
                 if flavored:
                     zips = flavored
 
@@ -181,15 +212,15 @@ def discover_candidates(search_dir: Path, build_type: str, remote_subdir: str = 
                 all_imgs = list(search_dir.glob("*/*.img"))
             imgs = [
                 i for i in all_imgs
-                if any(k in i.name.lower() for k in ["orangefox", "twrp", "recovery"])
+                if any(k in i.name.lower() for k in ["orangefox", "ofrp", "twrp", "recovery"])
             ]
             if rec_flavor:
-                flavored_imgs = [i for i in imgs if rec_flavor in i.name.lower()]
+                flavored_imgs = [i for i in imgs if any(fk in i.name.lower() for fk in flavor_keys)]
                 if flavored_imgs:
                     imgs = flavored_imgs
 
             if imgs:
-                branded = [i for i in imgs if any(k in i.name.lower() for k in ["orangefox", "twrp"])]
+                branded = [i for i in imgs if any(k in i.name.lower() for k in ["orangefox", "ofrp", "twrp"])]
                 chosen = branded if branded else imgs
                 chosen.sort(key=lambda x: x.stat().st_mtime, reverse=True)
                 candidates.append(chosen[0])
@@ -211,8 +242,10 @@ def discover_candidates(search_dir: Path, build_type: str, remote_subdir: str = 
                     zips = flavored
 
             if zips:
-                zips.sort(key=get_build_sort_key, reverse=True)
-                candidates.append(zips[0])
+                branded = [z for z in zips if not any(ota in z.stem.lower() for ota in ["-ota", "_ota"])]
+                chosen = branded if branded else zips
+                chosen.sort(key=get_build_sort_key, reverse=True)
+                candidates.append(chosen[0])
 
     return candidates
 
@@ -351,7 +384,7 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
 
     # Format canonical name with timestamp
     if flavor == "OrangeFox":
-        ver_match = re.search(r"OrangeFox[_-]?(R\d+\.\d+)", artifact.name, re.IGNORECASE)
+        ver_match = re.search(r"(?:OrangeFox|OFRP)[_-]?(R\d+\.\d+)", artifact.name, re.IGNORECASE)
         version = ver_match.group(1).upper() if ver_match else "R12.0"
         target_name = f"OrangeFox-{version}-{ts}-Unofficial-{dev}{suffix}"
     else:
