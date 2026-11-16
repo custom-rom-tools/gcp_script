@@ -267,6 +267,46 @@ def generate_md5sum(file_path: Path) -> Path | None:
         return None
 
 
+def detect_twrp_version() -> str:
+    """Detect TWRP version dynamically from recovery source or compiled ramdisk props."""
+    search_dirs = [
+        Path("."),
+        Path("/mnt/recovery/twrp"),
+        Path("/mnt/recovery"),
+        Path.home() / "twrp",
+    ]
+    for base in search_dirs:
+        for vh in [
+            base / "bootable" / "recovery" / "variables.h",
+            base / "bootable" / "recovery-twrp" / "variables.h",
+        ]:
+            if vh.is_file():
+                try:
+                    for line in vh.read_text(errors="ignore").splitlines():
+                        if "TW_MAIN_VERSION_STR" in line and "#define" in line:
+                            m = re.search(r'"([^"]+)"', line)
+                            if m:
+                                vm = re.search(r"([0-9]+\.[0-9]+(?:\.[0-9]+)?)", m.group(1))
+                                if vm:
+                                    return vm.group(1)
+                except Exception:
+                    pass
+
+        # Check compiled prop.default / default.prop in out/
+        for prop in base.glob("out/target/product/*/recovery/root/*prop*"):
+            if prop.is_file():
+                try:
+                    for line in prop.read_text(errors="ignore").splitlines():
+                        if line.startswith("ro.twrp.version="):
+                            vm = re.search(r"([0-9]+\.[0-9]+(?:\.[0-9]+)?)", line.split("=")[1])
+                            if vm:
+                                return vm.group(1)
+                except Exception:
+                    pass
+
+    return "3.7.1"
+
+
 def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_device: str = "") -> Path:
     """
     Ensure OFRP and TWRP recovery artifacts (.img, .zip) have an 8-digit timestamp (YYYYMMDD).
@@ -275,8 +315,8 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
     if not artifact.is_file() or artifact.suffix.lower() not in [".img", ".zip"]:
         return artifact
 
-    # If the recovery file already has an 8-digit timestamp (e.g. 20261114), leave as-is
-    if re.search(r'(20\d{6})', artifact.name):
+    # If the recovery file already has an 8-digit timestamp and is not mislabeled as 12.1, leave as-is
+    if re.search(r'(20\d{6})', artifact.name) and "TWRP-12.1" not in artifact.name:
         return artifact
 
     sub_lower = remote_subdir.lower()
@@ -316,8 +356,10 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
         target_name = f"OrangeFox-{version}-{ts}-Unofficial-{dev}{suffix}"
     else:
         ver_match = re.search(r"TWRP[_-]?(\d+\.\d+(?:\.\d+)?)", artifact.name, re.IGNORECASE)
-        version = ver_match.group(1) if ver_match else "12.1"
-        target_name = f"TWRP-{version}-{ts}-Unofficial-{dev}{suffix}"
+        version = ver_match.group(1) if ver_match else ""
+        if not version or version == "12.1":
+            version = detect_twrp_version()
+        target_name = f"TWRP-{version}_{ts}-Unofficial-{dev}{suffix}"
 
     new_path = artifact.with_name(target_name)
     if new_path == artifact:
