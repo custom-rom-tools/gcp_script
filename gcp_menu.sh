@@ -2557,6 +2557,106 @@ function configure_git_dummy_identity() {
     read -rp "Press Enter to return to menu..."
 }
 
+function change_vm_timezone() {
+    local target_tz="$1"
+
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${BOLD}              Change VM Timezone                            ${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+
+    if ! require_vm_running "change VM timezone"; then
+        return 1
+    fi
+
+    local cur_tz cur_time
+    cur_tz=$(vm_exec "timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo 'Unknown'" | tr -d '\r')
+    cur_time=$(vm_exec "date '+%Y-%m-%d %H:%M:%S %Z (%z)'" | tr -d '\r')
+
+    echo -e " Current VM Timezone : ${YELLOW}${cur_tz:-Unknown}${NC}"
+    echo -e " Current VM Date/Time: ${YELLOW}${cur_time:-Unknown}${NC}\n"
+
+    if [ -z "$target_tz" ]; then
+        echo -e " Choose target timezone:"
+        echo -e "  ${BOLD}1)${NC} India Standard Time (${GREEN}Asia/Kolkata${NC} / IST, UTC+5:30)"
+        echo -e "  ${BOLD}2)${NC} Universal Coordinated Time (${GREEN}UTC${NC})"
+        echo -e "  ${BOLD}3)${NC} US Eastern (${GREEN}America/New_York${NC} / EST/EDT)"
+        echo -e "  ${BOLD}4)${NC} US Pacific (${GREEN}America/Los_Angeles${NC} / PST/PDT)"
+        echo -e "  ${BOLD}5)${NC} Custom timezone (e.g. Europe/London, Asia/Dubai)"
+        echo -e "  ${BOLD}0)${NC} Cancel"
+        echo ""
+        read -rp "Select option [1-5, default: 1 (IST)]: " tz_choice
+        tz_choice="${tz_choice:-1}"
+
+        case "$tz_choice" in
+            1) target_tz="Asia/Kolkata" ;;
+            2) target_tz="UTC" ;;
+            3) target_tz="America/New_York" ;;
+            4) target_tz="America/Los_Angeles" ;;
+            5)
+                echo ""
+                read -rp "Enter timezone name (e.g. Asia/Kolkata, Europe/London): " custom_tz
+                target_tz="$custom_tz"
+                ;;
+            0|q|Q)
+                echo -e "${YELLOW}Timezone change cancelled.${NC}"
+                read -rp "Press Enter to return to menu..."
+                return 0
+                ;;
+            *)
+                target_tz="$tz_choice"
+                ;;
+        esac
+    fi
+
+    # Normalize common shortcuts
+    case "${target_tz,,}" in
+        ist|india|asia/calcutta) target_tz="Asia/Kolkata" ;;
+        utc|gmt) target_tz="UTC" ;;
+        est|edt) target_tz="America/New_York" ;;
+        pst|pdt) target_tz="America/Los_Angeles" ;;
+    esac
+
+    if [ -z "$target_tz" ]; then
+        echo -e "${RED}Error: No timezone specified.${NC}"
+        read -rp "Press Enter to return to menu..."
+        return 1
+    fi
+
+    echo -e "\n${CYAN}>>> Setting VM timezone to: ${BOLD}${target_tz}${NC}..."
+
+    local set_res
+    set_res=$(vm_exec "
+        if sudo timedatectl set-timezone '$target_tz' 2>/dev/null; then
+            echo 'SUCCESS'
+        elif [ -f '/usr/share/zoneinfo/$target_tz' ]; then
+            sudo ln -sf '/usr/share/zoneinfo/$target_tz' /etc/localtime && \
+            echo '$target_tz' | sudo tee /etc/timezone >/dev/null && \
+            echo 'SUCCESS'
+        else
+            echo 'INVALID'
+        fi
+    " | tr -d '\r')
+
+    if [[ "$set_res" == *"INVALID"* ]]; then
+        echo -e "${RED}Error: Timezone '$target_tz' was not recognized on the VM.${NC}"
+        echo -e "${YELLOW}Hint: Use standard IANA format (e.g. 'Asia/Kolkata', 'UTC', 'Europe/London').${NC}"
+        read -rp "Press Enter to return to menu..."
+        return 1
+    fi
+
+    local new_tz new_time
+    new_tz=$(vm_exec "timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo '$target_tz'" | tr -d '\r')
+    new_time=$(vm_exec "date '+%Y-%m-%d %H:%M:%S %Z (%z)'" | tr -d '\r')
+
+    echo -e "\n${GREEN}============================================================${NC}"
+    echo -e "${GREEN}>>> Timezone successfully changed on $INSTANCE!${NC}"
+    echo -e "    New Timezone : ${BOLD}$new_tz${NC}"
+    echo -e "    New Date/Time: ${BOLD}$new_time${NC}"
+    echo -e "${GREEN}============================================================${NC}\n"
+
+    read -rp "Press Enter to return to menu..."
+}
+
 function menu_tools() {
     while true; do
         clear 2>/dev/null || true
@@ -2567,9 +2667,10 @@ function menu_tools() {
         echo -e " ${BOLD}2)${NC} Upload SourceForge SSH Key (~/.ssh/crave_sf)"
         echo -e " ${BOLD}3)${NC} Deploy 30m Auto-Idle Shutdown Watchdog"
         echo -e " ${BOLD}4)${NC} Configure Git Dummy Identity (Avoid 429 Rate Limits)"
+        echo -e " ${BOLD}5)${NC} Change VM Timezone (IST or Custom)"
         echo -e " ${BOLD}0)${NC} Back to Main Menu"
         echo -e "${CYAN}=================================================================${NC}"
-        read -rp "Select option [0-4]: " t_choice
+        read -rp "Select option [0-5]: " t_choice
 
         case "$t_choice" in
             1) setup_environment; break ;;
@@ -2589,6 +2690,7 @@ function menu_tools() {
                 read -rp "Press Enter to return to menu..."
                 ;;
             4) configure_git_dummy_identity; break ;;
+            5) change_vm_timezone; break ;;
             0|*) break ;;
         esac
     done
@@ -3131,6 +3233,7 @@ case "$1" in
     setup) setup_environment; exit 0 ;;
     upload-key) upload_sf_key; exit 0 ;;
     git-config|dummy-git) configure_git_dummy_identity; exit 0 ;;
+    timezone|tz) change_vm_timezone "$2"; exit 0 ;;
     create-disk) create_and_attach_disk "$2" "$3" "$4"; exit 0 ;;
     delete-disk) detach_and_delete_disk "$2"; exit 0 ;;
     attach-disk) attach_disk_action "$2"; exit 0 ;;
