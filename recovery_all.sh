@@ -263,7 +263,6 @@ build_twrp() {
     echo " [TWRP] Step 3/5: Setting up environment & lunching $LUNCH_TARGET..."
     echo "------------------------------------------------------------"
     export ALLOW_MISSING_DEPENDENCIES=true
-    export TW_DEVICE_VERSION="12.1"
     export LC_ALL="C.UTF-8"
 
     source build/envsetup.sh
@@ -310,17 +309,37 @@ build_twrp() {
                 echo "------------------------------------------------------------"
                 local BUILD_DATE=$(date +%Y%m%d)
 
+                # Detect TWRP version dynamically from recovery source or compiled ramdisk props
+                local twrp_ver=""
+                for vh in "bootable/recovery/variables.h" "bootable/recovery-twrp/variables.h"; do
+                    if [ -f "$vh" ]; then
+                        twrp_ver=$(grep -E '^[[:space:]]*#[[:space:]]*define[[:space:]]+TW_MAIN_VERSION_STR' "$vh" 2>/dev/null | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
+                        [ -n "$twrp_ver" ] && break
+                    fi
+                done
+                if [ -z "$twrp_ver" ]; then
+                    twrp_ver=$(grep -rn "TW_MAIN_VERSION_STR" bootable/recovery 2>/dev/null | grep -E '#[[:space:]]*define' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
+                fi
+                for prop_file in "$out_dir/recovery/root/prop.default" "$out_dir/recovery/root/default.prop"; do
+                    if [ -f "$prop_file" ]; then
+                        built_ver=$(grep -E '^ro\.twrp\.version=' "$prop_file" 2>/dev/null | cut -d= -f2 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
+                        [ -n "$built_ver" ] && twrp_ver="$built_ver"
+                        break
+                    fi
+                done
+                twrp_ver="${twrp_ver:-3.7.1}"
+
                 if [ -s "$out_dir/recovery.img" ]; then
                     local existing_img=$(find "$out_dir" -maxdepth 1 -name "TWRP*.img" -size +0c | head -n 1)
                     if [ -z "$existing_img" ]; then
-                        mv -v "$out_dir/recovery.img" "$out_dir/TWRP-3.7.1_${BUILD_DATE}-Unofficial-${dev}.img"
+                        mv -v "$out_dir/recovery.img" "$out_dir/TWRP-${twrp_ver}_${BUILD_DATE}-Unofficial-${dev}.img"
                     fi
                 fi
 
                 if [ -s "$out_dir/recovery.zip" ]; then
                     local existing_zip=$(find "$out_dir" -maxdepth 1 -name "TWRP*.zip" -size +0c | head -n 1)
                     if [ -z "$existing_zip" ]; then
-                        mv -v "$out_dir/recovery.zip" "$out_dir/TWRP-3.7.1_${BUILD_DATE}-Unofficial-${dev}.zip"
+                        mv -v "$out_dir/recovery.zip" "$out_dir/TWRP-${twrp_ver}_${BUILD_DATE}-Unofficial-${dev}.zip"
                     fi
                 fi
 
