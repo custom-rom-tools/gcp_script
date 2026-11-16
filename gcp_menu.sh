@@ -3011,8 +3011,36 @@ function sync_upload_links() {
         vm_exec "cat ~/.upload_links.log 2>/dev/null || true" 2>/dev/null >> "$tmp_merge" || true
     fi
 
-    # Deduplicate preserving order and drop empty lines
-    awk 'NF && !seen[$0]++' "$tmp_merge" > "${tmp_merge}.clean"
+    # Deduplicate by URL preserving batch summaries and drop empty lines
+    python3 - "$tmp_merge" "${tmp_merge}.clean" <<'PY_DEDUP'
+import re
+import sys
+from pathlib import Path
+
+src, dst = map(Path, sys.argv[1:3])
+if not src.exists():
+    sys.exit(0)
+
+pattern = re.compile(r"^(.*?)\s*->\s*(https?://\S+)")
+url_map = {}
+
+for line in src.read_text(encoding="utf-8", errors="replace").splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    m = pattern.match(line)
+    if not m:
+        continue
+    prefix, url = m.groups()
+    if url not in url_map:
+        url_map[url] = line
+    else:
+        # Prefer the summary line that mentions "(All " or "files)"
+        if ("files)" in line or "(All" in line) and not ("files)" in url_map[url] or "(All" in url_map[url]):
+            url_map[url] = line
+
+dst.write_text("\n".join(url_map.values()) + ("\n" if url_map else ""), encoding="utf-8")
+PY_DEDUP
     mv "${tmp_merge}.clean" "$LOCAL_LINKS_FILE"
     rm -f "$tmp_merge"
 }
@@ -3028,15 +3056,30 @@ from pathlib import Path
 
 source, destination = map(Path, sys.argv[1:])
 ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-pattern = re.compile(r"^\[[^\]]+\]\s+\[[^\]]+\]\s+\[[^\]]+\]\s+.+\s->\shttps?://\S+")
-lines = destination.read_text(encoding="utf-8", errors="replace").splitlines() if destination.exists() else []
-seen = set(lines)
+pattern = re.compile(r"^\[[^\]]+\]\s+\[[^\]]+\]\s+\[[^\]]+\]\s+(.+)\s->\s(https?://\S+)")
+
+existing_lines = destination.read_text(encoding="utf-8", errors="replace").splitlines() if destination.exists() else []
+url_map = {}
+for line in existing_lines:
+    line = line.strip()
+    if not line:
+        continue
+    m = pattern.match(line)
+    if m:
+        url_map[m.group(2)] = line
+
 for raw in source.read_text(encoding="utf-8", errors="replace").splitlines():
     line = ansi.sub("", raw).strip()
-    if pattern.match(line) and line not in seen:
-        lines.append(line)
-        seen.add(line)
+    m = pattern.match(line)
+    if m:
+        url = m.group(2)
+        if url not in url_map:
+            url_map[url] = line
+        elif ("files)" in line or "(All" in line) and not ("files)" in url_map[url] or "(All" in url_map[url]):
+            url_map[url] = line
+
 destination.parent.mkdir(parents=True, exist_ok=True)
+lines = list(url_map.values())
 destination.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 PY_LINKS
 }
@@ -3057,10 +3100,14 @@ function view_upload_links() {
     fi
     echo -e "${CYAN}=================================================================${NC}"
     if [ -t 0 ]; then
-        read -rp " Press Enter to return (or 'c' to clear local cache): " link_ch
+        read -rp " Press Enter to return (or 'c' to clear links from local & VM): " link_ch
         if [[ "$link_ch" =~ ^[Cc]$ ]]; then
             rm -f "$LOCAL_LINKS_FILE"
-            echo -e "${YELLOW}>>> Local link cache cleared.${NC}"
+            if is_vm_running; then
+                vm_exec "> ~/.upload_links.log" 2>/dev/null || true
+            fi
+            gcloud compute instances remove-metadata "$INSTANCE" --zone="$ZONE" --project="$PROJECT" --keys=upload-links 2>/dev/null || true
+            echo -e "${YELLOW}>>> Link history completely cleared from local, VM, and cloud metadata.${NC}"
             sleep 1
         fi
     fi

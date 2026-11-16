@@ -659,9 +659,8 @@ def upload_fallback(files: list[Path], remote_subdir: str = "") -> list[tuple[st
             sz = uf.stat().st_size / (1024 * 1024)
             print(f"     - {uf.name} ({sz:.2f} MB)")
         print("=" * 64)
-        for uf in gofile_uploaded:
-            results.append(("Gofile", uf.name, gofile_folder_link))
-        results.append(("Gofile", f"{folder_name} (All {len(gofile_uploaded)} files)", gofile_folder_link))
+        batch_label = f"{folder_name} ({len(gofile_uploaded)} files)" if len(gofile_uploaded) > 1 else folder_name
+        results.append(("Gofile", batch_label, gofile_folder_link))
 
     # Filebin fallback for any files that failed Gofile upload
     if failed_files:
@@ -698,9 +697,8 @@ def upload_fallback(files: list[Path], remote_subdir: str = "") -> list[tuple[st
             print(f"✅ [FILEBIN SINGLE LINK] Files uploaded to:")
             print(f"   {bin_link}")
             print("=" * 64)
-            for uf in fb_uploaded:
-                results.append(("Filebin", uf.name, bin_link))
-            results.append(("Filebin", f"{folder_name} (All {len(fb_uploaded)} files)", bin_link))
+            batch_label = f"{folder_name} ({len(fb_uploaded)} files)" if len(fb_uploaded) > 1 else folder_name
+            results.append(("Filebin", batch_label, bin_link))
 
     return results
 
@@ -710,8 +708,16 @@ def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> Non
     if not entries:
         return
 
+    # Deduplicate entries by URL so each batch link is listed exactly once
+    seen_urls = set()
+    deduped_entries: list[tuple[str, str, str]] = []
+    for prov, name, url in entries:
+        if url not in seen_urls:
+            seen_urls.add(url)
+            deduped_entries.append((prov, name, url))
+
     ts = time.strftime("%Y-%m-%d %H:%M:%S %Z")
-    lines = [f"[{ts}] [{remote_subdir}] [{prov}] {name} -> {url}" for prov, name, url in entries]
+    lines = [f"[{ts}] [{remote_subdir}] [{prov}] {name} -> {url}" for prov, name, url in deduped_entries]
 
     print("\n=== UPLOAD LINKS SUMMARY ===")
     for line in lines:
