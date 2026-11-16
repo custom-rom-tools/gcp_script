@@ -2609,7 +2609,9 @@ function change_vm_timezone() {
     fi
 
     # Normalize common shortcuts
-    case "${target_tz,,}" in
+    local tz_lower
+    tz_lower="$(echo "$target_tz" | tr '[:upper:]' '[:lower:]')"
+    case "$tz_lower" in
         ist|india|asia/calcutta) target_tz="Asia/Kolkata" ;;
         utc|gmt) target_tz="UTC" ;;
         est|edt) target_tz="America/New_York" ;;
