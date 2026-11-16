@@ -76,11 +76,11 @@ curl -sLf "$CLEAN_SCRIPT_URL" | python3
 SYNC_OK=0
 for attempt in 1 2 3 4; do
     if [ -t 2 ]; then
-        repo sync -c --no-clone-bundle --no-tags --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
+        repo sync -c --no-clone-bundle --no-tags --fail-fast --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
     elif command -v script >/dev/null 2>&1; then
-        script -qefc "repo sync -c --no-clone-bundle --no-tags --force-sync -j\$(nproc --all)" /dev/null && { SYNC_OK=1; break; }
+        script -qefc "repo sync -c --no-clone-bundle --no-tags --fail-fast --force-sync -j\$(nproc --all)" /dev/null && { SYNC_OK=1; break; }
     else
-        repo sync -c --no-clone-bundle --no-tags --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
+        repo sync -c --no-clone-bundle --no-tags --fail-fast --force-sync -j$(nproc --all) && { SYNC_OK=1; break; }
     fi
     echo ">>> [WARN] repo sync failed (attempt $attempt/4, possible HTTP 429 rate limit); retrying in 60s..."
     sleep 60
