@@ -26,10 +26,12 @@ DEVICE_MANIFEST_URL="https://github.com/realme-atoll/RMX2170-manifest"
 DEVICE_MANIFEST_BRANCH="${DEVICE_MANIFEST_BRANCH:-evox-cnb}"
 
 # Build Settings
-BUILD_VARIANT="${1:-${BUILD_VARIANT:-userdebug}}"
+BUILD_VARIANT="${1:-${BUILD_VARIANT:-user}}"
 BUILD_TARGET="evolution"
 LUNCH_TARGET="lineage_${DEVICE}-cp2a-${BUILD_VARIANT}"
 WORK_DIR="/mnt/a17/evox"
+export SF_UPLOAD="false"
+unset SF_KEY
 
 # Cloud Upload Destination
 UPLOAD_SUBDIR="${DEVICE}/EvolutionX/17"
