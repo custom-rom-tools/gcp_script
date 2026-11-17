@@ -23,7 +23,7 @@ ROM_NAME="Evolution X"
 ROM_MANIFEST_URL="https://github.com/Evolution-X/manifest"
 ROM_MANIFEST_BRANCH="bka"
 DEVICE_MANIFEST_URL="https://github.com/realme-atoll/RMX3081-manifest"
-DEVICE_MANIFEST_BRANCH="evox-bka"
+DEVICE_MANIFEST_BRANCH="evox/bka"
 
 # Build Settings
 BUILD_VARIANT="${1:-${BUILD_VARIANT:-userdebug}}"
