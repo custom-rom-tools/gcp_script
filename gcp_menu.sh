@@ -1628,7 +1628,7 @@ stty start undef 2>/dev/null || true
 
 BUILD_SCRIPT_TMP="/tmp/gcp_build_script.sh"
 CACHE_BUST="\$(date +%s)"
-if curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "${script_url}?t=\${CACHE_BUST}" | sed -E '/repo[[:space:]]+sync/ { s/[[:space:]]+--progress([[:space:]]|\$)/\1/g; s/[[:space:]]+(-v|--verbose)([[:space:]]|\$)/\2/g; /--fail-fast/! s/(repo[[:space:]]+sync)/\1 --fail-fast/; }' > "\$BUILD_SCRIPT_TMP" && [ -s "\$BUILD_SCRIPT_TMP" ]; then
+if curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "${script_url}?t=\${CACHE_BUST}" | sed -E '/repo[[:space:]]+sync/ { s/[[:space:]]+--fail-fast([[:space:]]|\$)/\1/g; s/[[:space:]]+--progress([[:space:]]|\$)/\1/g; s/[[:space:]]+(-v|--verbose)([[:space:]]|\$)/\2/g; }' > "\$BUILD_SCRIPT_TMP" && [ -s "\$BUILD_SCRIPT_TMP" ]; then
     if command -v script >/dev/null 2>&1; then
         script -qefc "stdbuf -oL -eL bash \$BUILD_SCRIPT_TMP" '$mp/build.log'
         BUILD_EXIT=\$?
