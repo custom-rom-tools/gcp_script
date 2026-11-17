@@ -23,7 +23,7 @@ ROM_NAME="Evolution X"
 ROM_MANIFEST_URL="https://github.com/Evolution-X/manifest"
 ROM_MANIFEST_BRANCH="cnb"
 DEVICE_MANIFEST_URL="https://github.com/realme-atoll/RMX2061-manifest"
-DEVICE_MANIFEST_BRANCH="${DEVICE_MANIFEST_BRANCH:-evox-cnb}"
+DEVICE_MANIFEST_BRANCH="${DEVICE_MANIFEST_BRANCH:-evox/cnb}"
 
 # Build Settings
 BUILD_VARIANT="${1:-${BUILD_VARIANT:-userdebug}}"

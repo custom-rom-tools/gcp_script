@@ -25,13 +25,13 @@ ROM_MANIFEST_BRANCH="cnb"
 
 # Device Local Manifests (Configured independently per device)
 RMX2170_MANIFEST_URL="https://github.com/realme-atoll/RMX2170-manifest"
-RMX2170_MANIFEST_BRANCH="evox-cnb"
+RMX2170_MANIFEST_BRANCH="evox/cnb"
 
 RMX2061_MANIFEST_URL="https://github.com/realme-atoll/RMX2061-manifest"
-RMX2061_MANIFEST_BRANCH="evox-cnb"
+RMX2061_MANIFEST_BRANCH="evox/cnb"
 
 RMX3081_MANIFEST_URL="https://github.com/realme-atoll/RMX3081-manifest"
-RMX3081_MANIFEST_BRANCH="evox-cnb"
+RMX3081_MANIFEST_BRANCH="evox/cnb"
 
 # Build Settings
 BUILD_VARIANT="${1:-${BUILD_VARIANT:-userdebug}}"
