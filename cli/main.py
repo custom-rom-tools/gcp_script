@@ -13,7 +13,7 @@ from cli.base import (
 )
 from cli.services.vm import (
     get_active_vm, start_vm, stop_vm, is_vm_running, get_vm_info,
-    check_gcloud_auth, login_gcloud
+    check_gcloud_auth, login_gcloud, run_gcloud
 )
 from cli.cluster.vm import run_cluster_menu
 from cli.builds import rom
@@ -26,7 +26,7 @@ from cli.storage import swap
 from cli.tools import setup
 from cli.tools import auth
 from cli.tools import console
-from cli.services.runner import dispatch_build
+from cli.services.runner import dispatch_build, dispatch_kernel
 
 def run_build_dashboard(vm: dict):
     """Main Build & Operations Dashboard interactive loop."""
@@ -81,10 +81,12 @@ def run_build_dashboard(vm: dict):
         print(f" {BOLD}23){NC} Setup")
         print(f" {BOLD}24){NC} Upload Links")
         print(f" {YELLOW}25){NC} Switch VM")
+        print(f" {BOLD}26){NC} Build Kernel")
+        print(f" {BOLD}27){NC} Download Kernel")
         print(f" {RED}q){NC} Quit")
         print_divider()
 
-        choice = read_input(" Select 1-25 or q: ").strip().lower()
+        choice = read_input(" Select 1-27 or q: ").strip().lower()
 
         if choice in ("q", "quit", "exit"):
             sys.exit(0)
@@ -158,6 +160,22 @@ def run_build_dashboard(vm: dict):
         # 25: Cluster
         elif choice == "25":
             vm = run_cluster_menu()
+        elif choice == "26":
+            dispatch_kernel(vm)
+        elif choice == "27":
+            local_dir = Path.home() / "Downloads"
+            local_dir.mkdir(parents=True, exist_ok=True)
+            remote = "/mnt/a16/evox/out-kernel/arch/arm64/boot/Image.gz-dtb"
+            local = local_dir / "Image.gz-dtb"
+            args = ["compute", "scp", f"{vm['instance']}:{remote}", str(local), f"--zone={vm['zone']}"]
+            if vm.get("project"):
+                args.append(f"--project={vm['project']}")
+            res = run_gcloud(args, check=False)
+            if res.returncode == 0:
+                print(f">>> Downloaded: {local}")
+            else:
+                print(">>> Error: Kernel artifact download failed.")
+            pause()
 
 
 def main():
@@ -178,6 +196,8 @@ def main():
         print("  ./gcp_menu.sh stop")
         print("  ./gcp_menu.sh status")
         print("  ./gcp_menu.sh tmux")
+        print("  ./gcp_menu.sh kernel")
+        print("  ./gcp_menu.sh download-kernel")
         print("  ./gcp_menu.sh format-disk <disk_name>")
         return
 
@@ -186,6 +206,22 @@ def main():
 
     if command in ("cluster", "menu-cluster"):
         run_cluster_menu()
+
+    elif command == "kernel":
+        dispatch_kernel(vm)
+
+    elif command in ("download-kernel", "kernel-download"):
+        local = Path.home() / "Downloads" / "Image.gz-dtb"
+        local.parent.mkdir(parents=True, exist_ok=True)
+        remote = "/mnt/a16/evox/out-kernel/arch/arm64/boot/Image.gz-dtb"
+        args = ["compute", "scp", f"{vm['instance']}:{remote}", str(local), f"--zone={vm['zone']}"]
+        if vm.get("project"):
+            args.append(f"--project={vm['project']}")
+        res = run_gcloud(args, check=False)
+        if res.returncode == 0:
+            print(f">>> Downloaded: {local}")
+        else:
+            print(">>> Error: Kernel artifact download failed.")
 
     elif command in ("build", "build-rom"):
         parser = argparse.ArgumentParser(prog="./gcp_menu.sh build")

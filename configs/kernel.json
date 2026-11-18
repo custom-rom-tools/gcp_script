@@ -1,0 +1,21 @@
+{
+  "android_16": {
+    "name": "Android 16 Kernel",
+    "source_path": "/mnt/a16/evox/kernel/realme/sm7125",
+    "output_path": "/mnt/a16/evox/out-kernel",
+    "defconfig": "vendor/atoll_defconfig",
+    "arch": "arm64",
+    "clang": "/mnt/a16/evox/prebuilts/clang/host/linux-x86/clang-r574158/bin/clang",
+    "clang_bin": "/mnt/a16/evox/prebuilts/clang/host/linux-x86/clang-r574158/bin",
+    "gcc": "/mnt/a16/evox/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-",
+    "targets": [
+      "Image.gz-dtb",
+      "dtbs"
+    ],
+    "artifacts": [
+      "arch/arm64/boot/Image",
+      "arch/arm64/boot/Image.gz",
+      "arch/arm64/boot/Image.gz-dtb"
+    ]
+  }
+}
