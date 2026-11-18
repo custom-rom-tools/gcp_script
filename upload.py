@@ -23,6 +23,34 @@ SF_PROJECT = "realme-atoll"
 SF_USER = "nikhilpal2705"
 SF_HOST = "frs.sourceforge.net"
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+CONFIG_DIR = SCRIPT_DIR.parent / "configs"
+
+
+def load_config_devices() -> tuple[list[str], str]:
+    """Load device codes and default recovery device from JSON configuration."""
+    devices: list[str] = []
+    default_recovery = ""
+    for filename in ("rom.json", "recovery.json"):
+        try:
+            data = json.loads((CONFIG_DIR / filename).read_text(encoding="utf-8"))
+            if filename == "rom.json":
+                for rom_cfg in data.values():
+                    for ver_cfg in rom_cfg.get("versions", {}).values():
+                        for code in ver_cfg.get("devices", {}):
+                            if code not in devices:
+                                devices.append(code)
+            else:
+                for rec_cfg in data.values():
+                    for code in rec_cfg.get("devices", {}):
+                        if code not in devices:
+                            devices.append(code)
+                        if not default_recovery:
+                            default_recovery = code
+        except (OSError, json.JSONDecodeError):
+            pass
+    return devices, default_recovery
+
 
 def get_sf_key() -> Path | None:
     """
@@ -365,12 +393,12 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
         return artifact
 
     # Determine device
-    known_devs = ["RMX2170", "RMX2061", "RMX3081", "sm7125"]
+    known_devs, default_recovery = load_config_devices()
     search_space = f"{remote_subdir} {target_device} {artifact.parent.name} {artifact.name}"
-    dev = "sm7125"
+    dev = default_recovery
     for d in known_devs:
         if re.search(rf"\b{re.escape(d)}\b", search_space, re.IGNORECASE):
-            dev = "sm7125" if d.lower() == "sm7125" else d.upper()
+            dev = d
             break
 
     # Generate timestamp from file mtime or today

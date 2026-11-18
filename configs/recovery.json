@@ -1,0 +1,61 @@
+{
+  "ofrp": {
+    "name": "OrangeFox Recovery",
+    "aliases": ["orangefox", "fox"],
+    "default_variant": "eng",
+    "base_manifest_url": "https://gitlab.com/OrangeFox/Manifest.git",
+    "base_manifest_branch": "fox_16.0",
+    "device_manifest_url": "https://github.com/realme-atoll/recovery-manifest",
+    "device_manifest_branch": "ofrp",
+    "build_target": "recoveryimage",
+    "ofrp_release": "bp2a",
+    "lunch_pattern": "twrp_{device}-{ofrp_release}-{variant}",
+    "work_dir": "/mnt/recovery/ofrp",
+    "disk_mount": "/mnt/recovery",
+    "disk_name": "gcp-recovery-disk",
+    "upload_subdir": "SM7125/Recovery/OrangeFox",
+    "devices": {
+      "RMX2061": {
+        "name": "Realme 6 Pro"
+      },
+      "RMX2170": {
+        "name": "Realme 7 Pro"
+      },
+      "RMX3081": {
+        "name": "Realme 8 Pro"
+      },
+      "sm7125": {
+        "name": "Realme Atoll Unified (RMX2061/RMX2170/RMX3081)"
+      }
+    }
+  },
+  "twrp": {
+    "name": "TWRP Recovery",
+    "aliases": ["teamwin"],
+    "default_variant": "eng",
+    "base_manifest_url": "https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git",
+    "base_manifest_branch": "twrp-12.1",
+    "device_manifest_url": "https://github.com/realme-atoll/recovery-manifest",
+    "device_manifest_branch": "twrp",
+    "build_target": "recoveryimage",
+    "lunch_pattern": "twrp_{device}-{variant}",
+    "work_dir": "/mnt/recovery/twrp",
+    "disk_mount": "/mnt/recovery",
+    "disk_name": "gcp-recovery-disk",
+    "upload_subdir": "SM7125/Recovery/TWRP",
+    "devices": {
+      "RMX2061": {
+        "name": "Realme 6 Pro"
+      },
+      "RMX2170": {
+        "name": "Realme 7 Pro"
+      },
+      "RMX3081": {
+        "name": "Realme 8 Pro"
+      },
+      "sm7125": {
+        "name": "Realme Atoll Unified (RMX2061/RMX2170/RMX3081)"
+      }
+    }
+  }
+}
