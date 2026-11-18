@@ -131,17 +131,26 @@ for i in $(seq 1 5); do
     [ -e "$DEVICE" ] && break
     sleep 0.5
 done
-if [ ! -e "$DEVICE" ]; then exit 1; fi
+if [ ! -e "$DEVICE" ]; then 
+    echo "Error: Device $DEVICE not found"
+    exit 1
+fi
 DEV_PATH=$(realpath "$DEVICE")
 sudo mkdir -p '{mount_point}'
 # Re-mount
 if ! sudo blkid "$DEV_PATH" >/dev/null 2>&1; then
     sudo mkfs.ext4 -F -m 1 "$DEV_PATH"
 fi
-sudo mount -o discard,defaults,noatime,nofail "$DEV_PATH" '{mount_point}'
+if ! sudo mount -o discard,defaults,noatime,nofail "$DEV_PATH" '{mount_point}'; then
+    echo "Error: Failed to mount $DEV_PATH to {mount_point}"
+    exit 1
+fi
 sudo chown -R $(whoami):$(whoami) '{mount_point}'
 """
-    return vm_exec(vm, cmd, check=False).returncode == 0
+    res = vm_exec(vm, cmd, check=False)
+    if res.returncode != 0:
+        print(f">>> [Debug] Mount Error: {res.stdout} {res.stderr}")
+    return res.returncode == 0
 
 
 def format_disk_ext4(vm: dict, disk_name: str) -> bool:

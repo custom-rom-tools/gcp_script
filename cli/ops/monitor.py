@@ -16,7 +16,8 @@ def submenu_live_tmux(vm: dict):
     """Submenu to attach to the live tmux build session."""
     clear_screen()
     print_header("Attach to Live Build Session (tmux)")
-    attach_tmux_session(vm)
+    from cli.services.vm import vm_exec_tty
+    vm_exec_tty(vm, "tmux attach-session -t rom-build")
 
 
 def submenu_scan_errors(vm: dict):

@@ -62,7 +62,10 @@ def submenu_disk_manager(vm: dict):
             elif choice == "3":
                 mount_point = read_input("Enter mount point (e.g. /mnt/a16): ").strip()
                 if mount_point:
-                    mount_disk(vm, name, mount_point)
+                    if mount_disk(vm, name, mount_point):
+                        print(f">>> Success: Mounted {name} to {mount_point}")
+                    else:
+                        print(f">>> Error: Failed to mount {name} to {mount_point}")
             elif choice == "4":
                 confirm = read_input(f"Type FORMAT to wipe {name}: ").strip()
                 if confirm == "FORMAT":
