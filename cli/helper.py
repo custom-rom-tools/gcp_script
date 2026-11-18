@@ -51,6 +51,20 @@ def load_recovery_devices(recovery_key: str) -> dict:
     return {}
 
 
+def load_kernel_devices(kernel_key: str) -> dict:
+    """Load kernel target devices directly from configs/kernel.json."""
+    cfg_path = Path(__file__).resolve().parent.parent / "configs" / "kernel.json"
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        devices = data.get(kernel_key, {}).get("devices")
+        if devices:
+            return devices
+    except Exception:
+        pass
+    return {}
+
+
 def prompt_device_selection(rom_name: str, version: str, rom_key: str = "") -> str:
     """Prompt user to select a target device code or all devices."""
     devices = (
@@ -72,6 +86,25 @@ def prompt_device_selection(rom_name: str, version: str, rom_key: str = "") -> s
     idx_map[all_idx] = "all"
 
     choice = read_input(f"\nSelect device 1-{all_idx} or 0: ").strip()
+    return idx_map.get(choice, "")
+
+
+def prompt_kernel_device_selection(kernel_name: str, kernel_key: str) -> str:
+    """Prompt user to select a kernel target device code."""
+    devices = load_kernel_devices(kernel_key)
+
+    print(f"\nSelect device:")
+    idx_map = {}
+    for idx, (code, dev_data) in enumerate(devices.items(), 1):
+        name = dev_data.get("name", code)
+        print(f"   {GREEN}{idx}){NC} {name} ({code})")
+        idx_map[str(idx)] = code
+
+    print(f"   {RED}0){NC} Cancel")
+
+    choice = read_input(f"\nSelect device 1-{len(devices)} or 0: ").strip()
+    if choice == "0":
+        return ""
     return idx_map.get(choice, "")
 
 

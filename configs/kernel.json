@@ -1,21 +1,30 @@
 {
-  "android_16": {
-    "name": "Android 16 Kernel",
-    "source_path": "/mnt/a16/evox/kernel/realme/sm7125",
-    "output_path": "/mnt/a16/evox/out-kernel",
-    "defconfig": "vendor/atoll_defconfig",
-    "arch": "arm64",
-    "clang": "/mnt/a16/evox/prebuilts/clang/host/linux-x86/clang-r574158/bin/clang",
-    "clang_bin": "/mnt/a16/evox/prebuilts/clang/host/linux-x86/clang-r574158/bin",
-    "gcc": "/mnt/a16/evox/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-",
-    "targets": [
-      "Image.gz-dtb",
-      "dtbs"
-    ],
-    "artifacts": [
-      "arch/arm64/boot/Image",
-      "arch/arm64/boot/Image.gz",
-      "arch/arm64/boot/Image.gz-dtb"
-    ]
+  "atoll": {
+    "name": "Realme Atoll Kernel (sm7125)",
+    "aliases": ["kernel", "sm7125"],
+    "default_variant": "user",
+    "build_target": "bootimage",
+    "work_dir": "/mnt/kernel",
+    "disk_mount": "/mnt/kernel",
+    "disk_name": "gcp-kernel-disk",
+    "upload_subdir": "SM7125/Kernel/Atoll",
+    "devices": {
+      "RMX2061": {
+        "name": "Realme 6 Pro",
+        "defconfig": "vendor/RMX2061_defconfig"
+      },
+      "RMX2170": {
+        "name": "Realme 7 Pro",
+        "defconfig": "vendor/RMX2170_defconfig"
+      },
+      "RMX3081": {
+        "name": "Realme 8 Pro",
+        "defconfig": "vendor/RMX3081_defconfig"
+      },
+      "sm7125": {
+        "name": "Realme Atoll Unified (RMX2061/RMX2170/RMX3081)",
+        "defconfig": "vendor/sm7125_defconfig"
+      }
+    }
   }
 }

@@ -8,7 +8,7 @@ import argparse
 import json
 from pathlib import Path
 from cli.base import (
-    clear_screen, print_divider, CYAN, GREEN, YELLOW, RED, BLUE, BOLD, NC, pause,
+    clear_screen, print_divider, CYAN, GREEN, YELLOW, RED, BLUE, MAGENTA, BOLD, NC, pause,
     read_input, print_header, print_section, print_status
 )
 from cli.services.vm import (
@@ -18,6 +18,7 @@ from cli.services.vm import (
 from cli.cluster.vm import run_cluster_menu
 from cli.builds import rom
 from cli.builds import recovery
+from cli.builds import kernel
 from cli.ops import download
 from cli.ops import monitor
 from cli.ops import link
@@ -26,7 +27,8 @@ from cli.storage import swap
 from cli.tools import setup
 from cli.tools import auth
 from cli.tools import console
-from cli.services.runner import dispatch_build, dispatch_kernel
+from cli.services.runner import dispatch_build
+
 
 def run_build_dashboard(vm: dict):
     """Main Build & Operations Dashboard interactive loop."""
@@ -57,36 +59,38 @@ def run_build_dashboard(vm: dict):
         print(f" {YELLOW}7){NC} TWRP")
         print(f" {YELLOW}8){NC} All Recoveries")
 
+        print_section("Kernel")
+        print(f" {MAGENTA}9){NC} Realme Atoll  boot.img")
+
         print_section("Downloads")
-        print(f" {BLUE}9){NC} ROM")
-        print(f" {BLUE}10){NC} Recovery")
-        print(f" {BLUE}11){NC} Build Log")
+        print(f" {BLUE}10){NC} ROM")
+        print(f" {BLUE}11){NC} Recovery")
+        print(f" {BLUE}12){NC} Build Log")
 
         print_section("Monitor")
-        print(f" {GREEN}12){NC} Live Build")
-        print(f" {CYAN}13){NC} Build Status and Logs")
-        print(f" {YELLOW}14){NC} Live System Monitor")
-        print(f" {RED}15){NC} Stop Build")
+        print(f" {GREEN}13){NC} Live Build")
+        print(f" {CYAN}14){NC} Build Status and Logs")
+        print(f" {YELLOW}15){NC} Live System Monitor")
+        print(f" {RED}16){NC} Stop Build")
 
         print_section("VM")
-        print(f" {BOLD}16){NC} Status")
-        print(f" {BOLD}17){NC} Start")
-        print(f" {BOLD}18){NC} Stop")
-        print(f" {BOLD}19){NC} Disks")
-        print(f" {BOLD}20){NC} Swap")
-        print(f" {BOLD}21){NC} Machine Type")
+        print(f" {BOLD}17){NC} Status")
+        print(f" {BOLD}18){NC} Start")
+        print(f" {BOLD}19){NC} Stop")
+        print(f" {BOLD}20){NC} Disks")
+        print(f" {BOLD}21){NC} Swap")
+        print(f" {BOLD}22){NC} Machine Type")
 
         print_section("Tools")
-        print(f" {BOLD}22){NC} SSH")
-        print(f" {BOLD}23){NC} Setup")
-        print(f" {BOLD}24){NC} Upload Links")
-        print(f" {YELLOW}25){NC} Switch VM")
-        print(f" {BOLD}26){NC} Build Kernel")
-        print(f" {BOLD}27){NC} Download Kernel")
+        print(f" {BOLD}23){NC} SSH")
+        print(f" {BOLD}24){NC} Setup")
+        print(f" {BOLD}25){NC} Upload Links")
+        print(f" {YELLOW}26){NC} Switch VM")
+        print(f"")
         print(f" {RED}q){NC} Quit")
         print_divider()
 
-        choice = read_input(" Select 1-27 or q: ").strip().lower()
+        choice = read_input(" Select 1-26 or q: ").strip().lower()
 
         if choice in ("q", "quit", "exit"):
             sys.exit(0)
@@ -113,69 +117,55 @@ def run_build_dashboard(vm: dict):
         elif choice == "8":
             recovery.submenu_batch_recoveries(vm)
 
-        # 9-11: Downloads
+        # 9: Kernel
         elif choice == "9":
-            download.submenu_download_rom(vm)
+            kernel.submenu_atoll_kernel(vm)
+
+        # 10-12: Downloads
         elif choice == "10":
-            download.submenu_download_recovery(vm)
+            download.submenu_download_rom(vm)
         elif choice == "11":
+            download.submenu_download_recovery(vm)
+        elif choice == "12":
             download.submenu_download_log(vm)
 
-        # 12-15: Monitoring & VM Info
-        elif choice == "12":
-            monitor.submenu_live_tmux(vm)
+        # 13-16: Monitoring
         elif choice == "13":
-            monitor.submenu_build_status(vm)
+            monitor.submenu_live_tmux(vm)
         elif choice == "14":
-            monitor.submenu_live_monitor(vm)
+            monitor.submenu_build_status(vm)
         elif choice == "15":
-            monitor.submenu_stop_build(vm)
+            monitor.submenu_live_monitor(vm)
         elif choice == "16":
-            monitor.submenu_vm_info(vm)
+            monitor.submenu_stop_build(vm)
 
-        # 17-18: VM Power
+        # 17-22: VM Control & Storage
         elif choice == "17":
+            monitor.submenu_vm_info(vm)
+        elif choice == "18":
             start_vm(vm)
             pause()
-        elif choice == "18":
+        elif choice == "19":
             stop_vm(vm)
             pause()
-
-        # 19-21: Storage & Machine Sizing
-        elif choice == "19":
-            disk.submenu_disk_manager(vm)
         elif choice == "20":
-            swap.submenu_swap_manager(vm)
+            disk.submenu_disk_manager(vm)
         elif choice == "21":
+            swap.submenu_swap_manager(vm)
+        elif choice == "22":
             setup.submenu_machine_type(vm)
 
-        # 22-24: SSH Console, Setup, Upload Links
-        elif choice == "22":
-            console.submenu_ssh_console(vm)
+        # 23-25: SSH Console, Setup, Upload Links
         elif choice == "23":
-            setup.run_tools_menu(vm)
+            console.submenu_ssh_console(vm)
         elif choice == "24":
+            setup.run_tools_menu(vm)
+        elif choice == "25":
             link.submenu_view_links(vm)
 
-        # 25: Cluster
-        elif choice == "25":
-            vm = run_cluster_menu()
+        # 26: Cluster
         elif choice == "26":
-            dispatch_kernel(vm)
-        elif choice == "27":
-            local_dir = Path.home() / "Downloads"
-            local_dir.mkdir(parents=True, exist_ok=True)
-            remote = "/mnt/a16/evox/out-kernel/arch/arm64/boot/Image.gz-dtb"
-            local = local_dir / "Image.gz-dtb"
-            args = ["compute", "scp", f"{vm['instance']}:{remote}", str(local), f"--zone={vm['zone']}"]
-            if vm.get("project"):
-                args.append(f"--project={vm['project']}")
-            res = run_gcloud(args, check=False)
-            if res.returncode == 0:
-                print(f">>> Downloaded: {local}")
-            else:
-                print(">>> Error: Kernel artifact download failed.")
-            pause()
+            vm = run_cluster_menu()
 
 
 def main():
@@ -192,12 +182,11 @@ def main():
         print("  ./gcp_menu.sh")
         print("  ./gcp_menu.sh build")
         print("  ./gcp_menu.sh recovery")
+        print("  ./gcp_menu.sh kernel")
         print("  ./gcp_menu.sh start")
         print("  ./gcp_menu.sh stop")
         print("  ./gcp_menu.sh status")
         print("  ./gcp_menu.sh tmux")
-        print("  ./gcp_menu.sh kernel")
-        print("  ./gcp_menu.sh download-kernel")
         print("  ./gcp_menu.sh format-disk <disk_name>")
         return
 
@@ -208,20 +197,7 @@ def main():
         run_cluster_menu()
 
     elif command == "kernel":
-        dispatch_kernel(vm)
-
-    elif command in ("download-kernel", "kernel-download"):
-        local = Path.home() / "Downloads" / "Image.gz-dtb"
-        local.parent.mkdir(parents=True, exist_ok=True)
-        remote = "/mnt/a16/evox/out-kernel/arch/arm64/boot/Image.gz-dtb"
-        args = ["compute", "scp", f"{vm['instance']}:{remote}", str(local), f"--zone={vm['zone']}"]
-        if vm.get("project"):
-            args.append(f"--project={vm['project']}")
-        res = run_gcloud(args, check=False)
-        if res.returncode == 0:
-            print(f">>> Downloaded: {local}")
-        else:
-            print(">>> Error: Kernel artifact download failed.")
+        kernel.submenu_atoll_kernel(vm)
 
     elif command in ("build", "build-rom"):
         parser = argparse.ArgumentParser(prog="./gcp_menu.sh build")
@@ -380,7 +356,7 @@ def main():
 
     else:
         print(f"Unknown command '{command}'.")
-        print("Run './gcp_menu.sh' to enter the menu, or use 'build', 'recovery', 'start', 'stop', 'status'.")
+        print("Run './gcp_menu.sh' to enter the menu, or use 'build', 'recovery', 'kernel', 'start', 'stop', 'status'.")
         sys.exit(1)
 
 
