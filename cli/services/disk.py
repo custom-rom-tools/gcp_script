@@ -90,7 +90,16 @@ def detach_disk(vm: dict, disk_name: str) -> bool:
     return run_gcloud(args, check=False).returncode == 0
 
 
+def is_mounted(vm: dict, mount_point: str) -> bool:
+    """Checks if a mount point is active."""
+    cmd = f"mountpoint -q '{mount_point}'"
+    return vm_exec(vm, cmd, check=False).returncode == 0
+
+
 def mount_disk(vm: dict, disk_name: str, mount_point: str) -> bool:
+    if is_mounted(vm, mount_point):
+        return True
+        
     device_name = "rom-storage"
     for disk in get_attached_disks(vm):
         if disk["name"] == disk_name and disk["device_name"]:
@@ -98,20 +107,20 @@ def mount_disk(vm: dict, disk_name: str, mount_point: str) -> bool:
             break
     cmd = f"""
 DEVICE=/dev/disk/by-id/google-{device_name}
-for i in $(seq 1 10); do
+# Only wait if device not present
+for i in $(seq 1 5); do
     [ -e "$DEVICE" ] && break
-    sleep 2
+    sleep 0.5
 done
 if [ ! -e "$DEVICE" ]; then exit 1; fi
 DEV_PATH=$(realpath "$DEVICE")
 sudo mkdir -p '{mount_point}'
-if ! mountpoint -q '{mount_point}'; then
-    if ! sudo blkid "$DEV_PATH" >/dev/null 2>&1; then
-        sudo mkfs.ext4 -F -m 1 "$DEV_PATH"
-    fi
-    sudo mount -o discard,defaults,noatime,nofail "$DEV_PATH" '{mount_point}'
+# Re-mount
+if ! sudo blkid "$DEV_PATH" >/dev/null 2>&1; then
+    sudo mkfs.ext4 -F -m 1 "$DEV_PATH"
 fi
-sudo chown -R $USER:$USER '{mount_point}'
+sudo mount -o discard,defaults,noatime,nofail "$DEV_PATH" '{mount_point}'
+sudo chown -R $(whoami):$(whoami) '{mount_point}'
 """
     return vm_exec(vm, cmd, check=False).returncode == 0
 

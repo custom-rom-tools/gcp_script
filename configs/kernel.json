@@ -1,29 +1,37 @@
 {
   "atoll": {
-    "name": "Realme Atoll Kernel (sm7125)",
-    "aliases": ["kernel", "sm7125"],
+    "name": "Realme Atoll Kernel",
+    "aliases": ["kernel", "atoll"],
     "default_variant": "user",
     "build_target": "bootimage",
-    "work_dir": "/mnt/kernel",
     "disk_mount": "/mnt/kernel",
-    "disk_name": "gcp-kernel-disk",
-    "upload_subdir": "SM7125/Kernel/Atoll",
-    "devices": {
-      "RMX2061": {
-        "name": "Realme 6 Pro",
-        "defconfig": "vendor/RMX2061_defconfig"
+    "work_dir": "/mnt/kernel/atoll",
+    "versions": {
+      "16": {
+        "name": "Android 16",
+        "work_dir": "/mnt/kernel/evox",
+        "defconfig": "vendor/atoll_defconfig",
+        "upload_subdir": "Kernel/16",
+        "lunch_target": "lineage_RMX2170-bp4a-userdebug",
+        "devices": {
+          "RMX2061": "Realme 6 Pro",
+          "RMX2170": "Realme 7 Pro",
+          "RMX3081": "Realme 8 Pro",
+          "sm7125":  "Realme Atoll Unified"
+        }
       },
-      "RMX2170": {
-        "name": "Realme 7 Pro",
-        "defconfig": "vendor/RMX2170_defconfig"
-      },
-      "RMX3081": {
-        "name": "Realme 8 Pro",
-        "defconfig": "vendor/RMX3081_defconfig"
-      },
-      "sm7125": {
-        "name": "Realme Atoll Unified (RMX2061/RMX2170/RMX3081)",
-        "defconfig": "vendor/sm7125_defconfig"
+      "17": {
+        "name": "Android 17",
+        "work_dir": "/mnt/kernel/evox",
+        "defconfig": "vendor/atoll_defconfig",
+        "upload_subdir": "Kernel/17",
+        "lunch_target": "lineage_RMX2170-bp4a-userdebug",
+        "devices": {
+          "RMX2061": "Realme 6 Pro",
+          "RMX2170": "Realme 7 Pro",
+          "RMX3081": "Realme 8 Pro",
+          "sm7125":  "Realme Atoll Unified"
+        }
       }
     }
   }

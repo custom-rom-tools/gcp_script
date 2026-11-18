@@ -8,11 +8,11 @@ from cli.helper import prompt_kernel_device_selection, prompt_build_options
 from cli.services.runner import dispatch_build
 
 
-def submenu_atoll_kernel(vm: dict):
-    """Submenu for compiling Realme Atoll kernel (boot.img for all devices)."""
+def submenu_atoll_kernel(vm: dict, version: str = "16"):
+    """Submenu for compiling Realme Atoll kernel."""
     clear_screen()
-    print_header("Realme Atoll Kernel  boot.img")
-    dev = prompt_kernel_device_selection("Realme Atoll Kernel", "atoll")
+    print_header(f"Realme Atoll Kernel (Android {version})")
+    dev = prompt_kernel_device_selection("Realme Atoll Kernel", "atoll", version)
     if not dev:
         return
     opts = prompt_build_options()
@@ -20,6 +20,7 @@ def submenu_atoll_kernel(vm: dict):
         vm=vm,
         target_type="kernel",
         name="atoll",
+        version=version,
         device=dev,
         variant="user",
         attach_live=True,

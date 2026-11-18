@@ -50,7 +50,7 @@ fi
 
 def sync_build_tools_to_vm(vm: dict) -> bool:
     """Sync local scripts/ and configs/ to ~/.gcp_farm/ on the VM."""
-    print(">>> Syncing build scripts and configs to VM...")
+    print(">>> [Status] Syncing build scripts and configs to VM...", end="", flush=True)
     vm_exec(vm, "mkdir -p ~/.gcp_farm", check=False)
 
     for folder in ["scripts", "configs"]:
@@ -65,6 +65,7 @@ def sync_build_tools_to_vm(vm: dict) -> bool:
             if vm.get("project"):
                 args.append(f"--project={vm['project']}")
             run_gcloud(args, check=False)
+    print(" Done.", flush=True)
 
     return True
 
@@ -100,14 +101,14 @@ def dispatch_build(
 
     # 3. Resolve target storage disk
     if target_type == "kernel":
-        # Kernel gets its own dedicated disk and mount point from kernel.json
+        # Kernel uses version-specific ROM folder
         kernel_cfg = load_kernel_config().get(name, {})
-        disk_name = kernel_cfg.get("disk_name", "gcp-kernel-disk")
+        ver_cfg = kernel_cfg.get("versions", {}).get(version, {})
+        # Fallback to general disk if no specific kernel disk (as requested: mount general)
+        disk_name = "gcp-general-disk" 
         mp = kernel_cfg.get("disk_mount", "/mnt/kernel")
         target_disk = disk_name
-        defconfig = kernel_cfg.get("devices", {}).get(device, {}).get(
-            "defconfig", "vendor/sm7125_defconfig"
-        )
+        defconfig = ver_cfg.get("defconfig", "vendor/atoll_defconfig")
     elif target_type == "recovery":
         disk_target_tag = "recovery"
         resolved = resolve_build_disk(vm, disk_target_tag)
@@ -136,16 +137,26 @@ def dispatch_build(
     # 4. Attach & Mount disk
     attached_names = {d["name"] for d in get_attached_disks(vm)}
     if target_disk not in attached_names:
+        print(f">>> [Status] Attaching disk {target_disk}...", end="", flush=True)
         if not attach_disk(vm, target_disk):
+            print(" Failed.", flush=True)
             print(f">>> Error: Failed to attach {target_disk}")
             return False
-    if format_disk:
-        if not format_disk_ext4(vm, target_disk):
-            return False
+        print(" Done.", flush=True)
 
+    if format_disk:
+        print(f">>> [Status] Formatting disk {target_disk}...", end="", flush=True)
+        if not format_disk_ext4(vm, target_disk):
+            print(" Failed.", flush=True)
+            return False
+        print(" Done.", flush=True)
+
+    print(f">>> [Status] Mounting disk {target_disk} at {mp}...", end="", flush=True)
     if not mount_disk(vm, target_disk, mp):
+        print(" Failed.", flush=True)
         print(f">>> Error: Failed to mount {target_disk} at {mp}")
         return False
+    print(" Done.", flush=True)
 
     # 5. Sync scripts & configs to VM
     sync_build_tools_to_vm(vm)

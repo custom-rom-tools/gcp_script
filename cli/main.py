@@ -6,7 +6,9 @@ Orchestrates non-interactive CLI flags and drives the main interactive build das
 import sys
 import argparse
 import json
+import importlib
 from pathlib import Path
+from cli import base, services, builds, ops, storage, tools, cluster
 from cli.base import (
     clear_screen, print_divider, CYAN, GREEN, YELLOW, RED, BLUE, MAGENTA, BOLD, NC, pause,
     read_input, print_header, print_section, print_status
@@ -16,18 +18,33 @@ from cli.services.vm import (
     check_gcloud_auth, login_gcloud, run_gcloud
 )
 from cli.cluster.vm import run_cluster_menu
-from cli.builds import rom
-from cli.builds import recovery
-from cli.builds import kernel
-from cli.ops import download
-from cli.ops import monitor
-from cli.ops import link
-from cli.storage import disk
-from cli.storage import swap
-from cli.tools import setup
-from cli.tools import auth
-from cli.tools import console
+from cli.builds import rom, recovery, kernel
+from cli.ops import download, monitor, link
+from cli.storage import disk, swap
+from cli.tools import setup, auth, console
 from cli.services.runner import dispatch_build
+
+
+def reload_all():
+    """Reloads all cli modules to reflect changes in real-time."""
+    importlib.reload(base)
+    importlib.reload(services.vm)
+    importlib.reload(services.runner)
+    importlib.reload(services.disk)
+    importlib.reload(services.download)
+    importlib.reload(services.tool)
+    importlib.reload(builds.rom)
+    importlib.reload(builds.recovery)
+    importlib.reload(builds.kernel)
+    importlib.reload(ops.download)
+    importlib.reload(ops.monitor)
+    importlib.reload(ops.link)
+    importlib.reload(storage.disk)
+    importlib.reload(storage.swap)
+    importlib.reload(tools.setup)
+    importlib.reload(tools.auth)
+    importlib.reload(tools.console)
+    importlib.reload(cluster.vm)
 
 
 def run_build_dashboard(vm: dict):
@@ -60,40 +77,47 @@ def run_build_dashboard(vm: dict):
         print(f" {YELLOW}8){NC} All Recoveries")
 
         print_section("Kernel")
-        print(f" {MAGENTA}9){NC} Realme Atoll  boot.img")
+        print(f" {MAGENTA}9){NC} Android 16  Kernel")
+        print(f" {MAGENTA}10){NC} Android 17  Kernel")
 
         print_section("Downloads")
-        print(f" {BLUE}10){NC} ROM")
-        print(f" {BLUE}11){NC} Recovery")
-        print(f" {BLUE}12){NC} Build Log")
+        print(f" {BLUE}11){NC} ROM")
+        print(f" {BLUE}12){NC} Recovery")
+        print(f" {BLUE}13){NC} Kernel")
+        print(f" {BLUE}14){NC} Build Log")
 
         print_section("Monitor")
-        print(f" {GREEN}13){NC} Live Build")
-        print(f" {CYAN}14){NC} Build Status and Logs")
-        print(f" {YELLOW}15){NC} Live System Monitor")
-        print(f" {RED}16){NC} Stop Build")
+        print(f" {GREEN}14){NC} Live Build")
+        print(f" {CYAN}15){NC} Build Status and Logs")
+        print(f" {YELLOW}16){NC} Live System Monitor")
+        print(f" {RED}17){NC} Stop Build")
 
         print_section("VM")
-        print(f" {BOLD}17){NC} Status")
-        print(f" {BOLD}18){NC} Start")
-        print(f" {BOLD}19){NC} Stop")
-        print(f" {BOLD}20){NC} Disks")
-        print(f" {BOLD}21){NC} Swap")
-        print(f" {BOLD}22){NC} Machine Type")
+        print(f" {BOLD}18){NC} Status")
+        print(f" {BOLD}19){NC} Start")
+        print(f" {BOLD}20){NC} Stop")
+        print(f" {BOLD}21){NC} Disks")
+        print(f" {BOLD}22){NC} Swap")
+        print(f" {BOLD}23){NC} Machine Type")
 
         print_section("Tools")
-        print(f" {BOLD}23){NC} SSH")
-        print(f" {BOLD}24){NC} Setup")
-        print(f" {BOLD}25){NC} Upload Links")
-        print(f" {YELLOW}26){NC} Switch VM")
+        print(f" {BOLD}24){NC} SSH")
+        print(f" {BOLD}25){NC} Setup")
+        print(f" {BOLD}26){NC} Upload Links")
+        print(f" {YELLOW}27){NC} Switch VM")
+        print(f" {BOLD}r){NC} Refresh Menu")
         print(f"")
         print(f" {RED}q){NC} Quit")
         print_divider()
 
-        choice = read_input(" Select 1-26 or q: ").strip().lower()
+        choice = read_input(" Select 1-27, r, or q: ").strip().lower()
 
         if choice in ("q", "quit", "exit"):
             sys.exit(0)
+        
+        if choice == "r":
+            reload_all()
+            continue
 
         # 1-3: Android 16 ROMs
         elif choice == "1":
@@ -117,54 +141,58 @@ def run_build_dashboard(vm: dict):
         elif choice == "8":
             recovery.submenu_batch_recoveries(vm)
 
-        # 9: Kernel
+        # 9-10: Kernel
         elif choice == "9":
-            kernel.submenu_atoll_kernel(vm)
-
-        # 10-12: Downloads
+            kernel.submenu_atoll_kernel(vm, "16")
         elif choice == "10":
-            download.submenu_download_rom(vm)
+            kernel.submenu_atoll_kernel(vm, "17")
+
+        # 11-14: Downloads
         elif choice == "11":
-            download.submenu_download_recovery(vm)
+            download.submenu_download_rom(vm)
         elif choice == "12":
+            download.submenu_download_recovery(vm)
+        elif choice == "13":
+            download.submenu_download_kernel(vm)
+        elif choice == "14":
             download.submenu_download_log(vm)
 
-        # 13-16: Monitoring
-        elif choice == "13":
-            monitor.submenu_live_tmux(vm)
+        # 14-17: Monitoring
         elif choice == "14":
-            monitor.submenu_build_status(vm)
+            monitor.submenu_live_tmux(vm)
         elif choice == "15":
-            monitor.submenu_live_monitor(vm)
+            monitor.submenu_build_status(vm)
         elif choice == "16":
+            monitor.submenu_live_monitor(vm)
+        elif choice == "17":
             monitor.submenu_stop_build(vm)
 
-        # 17-22: VM Control & Storage
-        elif choice == "17":
-            monitor.submenu_vm_info(vm)
+        # 18-23: VM Control & Storage
         elif choice == "18":
+            monitor.submenu_vm_info(vm)
+        elif choice == "19":
             start_vm(vm)
             pause()
-        elif choice == "19":
+        elif choice == "20":
             stop_vm(vm)
             pause()
-        elif choice == "20":
-            disk.submenu_disk_manager(vm)
         elif choice == "21":
-            swap.submenu_swap_manager(vm)
+            disk.submenu_disk_manager(vm)
         elif choice == "22":
+            swap.submenu_swap_manager(vm)
+        elif choice == "23":
             setup.submenu_machine_type(vm)
 
-        # 23-25: SSH Console, Setup, Upload Links
-        elif choice == "23":
-            console.submenu_ssh_console(vm)
+        # 24-26: SSH Console, Setup, Upload Links
         elif choice == "24":
-            setup.run_tools_menu(vm)
+            console.submenu_ssh_console(vm)
         elif choice == "25":
+            setup.run_tools_menu(vm)
+        elif choice == "26":
             link.submenu_view_links(vm)
 
-        # 26: Cluster
-        elif choice == "26":
+        # 27: Cluster
+        elif choice == "27":
             vm = run_cluster_menu()
 
 

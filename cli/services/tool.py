@@ -106,7 +106,7 @@ def deploy_watchdog(vm: dict) -> bool:
         print(">>> Error: Target VM is offline.")
         return False
     repo_root = Path(__file__).resolve().parent.parent.parent
-    script = repo_root / "system" / "startup.sh"
+    script = repo_root / "startup.sh"
     if not script.is_file():
         print(">>> Error: Watchdog script not found.")
         return False
@@ -139,7 +139,7 @@ def setup_environment(vm: dict) -> bool:
         print(">>> Error: Target VM is offline.")
         return False
     repo_root = Path(__file__).resolve().parent.parent.parent
-    script = repo_root / "system" / "setup_host.sh"
+    script = repo_root / "setup_host.sh"
     if not script.is_file():
         print(">>> Error: setup_host.sh not found.")
         return False

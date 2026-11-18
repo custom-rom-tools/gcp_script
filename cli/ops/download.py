@@ -7,6 +7,14 @@ from cli.base import clear_screen, print_header, pause
 from cli.services.download import download_artifacts
 
 
+def submenu_download_kernel(vm: dict):
+    """Submenu to search and pull latest kernel image."""
+    clear_screen()
+    print_header("Download Kernel")
+    download_artifacts(vm, artifact_type="kernel")
+    pause()
+
+
 def submenu_download_rom(vm: dict):
     """Submenu to search and pull latest compiled ROM zip."""
     clear_screen()

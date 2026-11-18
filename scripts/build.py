@@ -202,7 +202,8 @@ def build_single_recovery(rec_cfg, flavor_key, dev_code, variant, sf_upload, gof
     os.chdir(work_dir)
 
     rec_name = rec_cfg["name"]
-    upload_subdir = rec_cfg.get("upload_subdir", f"{dev_code.upper()}/Recovery/{rec_name}")
+    # Unified upload path: {device}/{upload_subdir}
+    upload_subdir = f"{dev_code.upper()}/{rec_cfg['upload_subdir']}"
     build_target = rec_cfg.get("build_target", "recoveryimage")
 
     print("\n" + "=" * 60)
@@ -275,12 +276,80 @@ lunch '{lunch_target}' && m -j{nproc} '{build_target}'
         run_command(f"python3 {upload_py} '{upload_subdir}' '{dev_code}' 'recovery'", cwd=work_dir, env=upload_env)
 
 
+def build_single_kernel_device(kernel_cfg, ver_cfg, dev_code, sf_upload, gofile_upload):
+    """Build a Kernel (boot.img) using the full ROM/Recovery pipeline."""
+    work_dir = Path(ver_cfg["work_dir"])
+    work_dir.mkdir(parents=True, exist_ok=True)
+    os.chdir(work_dir)
+
+    # Smart upload path: DEVICE/Subdir
+    upload_subdir = f"{dev_code.upper()}/{ver_cfg['upload_subdir']}"
+    build_target = kernel_cfg.get("build_target", "bootimage")
+    defconfig = ver_cfg["defconfig"]
+
+    print("\n" + "=" * 60)
+    print(f" Building {kernel_name} for {dev_code}")
+    print(f" Workspace : {work_dir}")
+    print(f" Manifest  : {ver_cfg['base_manifest_url']} [{ver_cfg['base_manifest_branch']}]")
+    print(f" Defconfig : {defconfig}")
+    print("=" * 60)
+
+    # 1. Clean
+    clean_py = SCRIPT_DIR / "clean.py"
+    if clean_py.is_file():
+        run_command(f"python3 {clean_py} --clean-trees --target kernel --device {dev_code}", cwd=work_dir, check=False)
+
+    # 2. Repo Init & Sync
+    print(f"\n[1/4] Initializing Kernel Source...")
+    run_command(f"repo init -u '{ver_cfg['base_manifest_url']}' -b '{ver_cfg['base_manifest_branch']}'", cwd=work_dir)
+    
+    print(f"\n[2/4] Setting up device manifest...")
+    # Assume device manifest for kernel is in local_manifests if needed, or already in base.
+    # The kernel manifest structure might be different. I'll clone it if provided.
+    if "device_manifest_url" in ver_cfg:
+        run_command(f"git clone -b '{ver_cfg['device_manifest_branch']}' '{ver_cfg['device_manifest_url']}' .repo/local_manifests", cwd=work_dir)
+
+    print("\n[3/4] Syncing kernel sources...")
+    nproc = os.cpu_count() or 16
+    run_command(f"repo sync -c -j{nproc} --force-sync --no-clone-bundle --no-tags", cwd=work_dir, pty=True)
+
+    # Apply patches
+    patch_py = SCRIPT_DIR / "patch.py"
+    if patch_py.is_file():
+        run_command(f"python3 {patch_py} --target kernel --dev {dev_code}", cwd=work_dir, check=False)
+
+    # 4. Compile via ROM environment
+    print(f"\n[4/4] Compiling Kernel using ROM environment...")
+    # Use the lunch target from configuration or a default if not set.
+    # I'll update kernel.json to store the lunch target.
+    lunch_target = ver_cfg.get("lunch_target", f"lineage_{dev_code}-userdebug")
+    
+    build_cmd = f"""
+source build/envsetup.sh
+lunch '{lunch_target}'
+m -j{nproc} {build_target}
+"""
+    run_command(build_cmd, cwd=work_dir, pty=True)
+
+    # 5. Upload
+    print("\n[5/5] Uploading kernel artifacts...")
+    upload_py = SCRIPT_DIR / "upload.py"
+    if upload_py.is_file():
+        upload_env = {
+            "SF_UPLOAD": "true" if sf_upload else "false",
+            "SKIP_GOFILE": "false" if gofile_upload else "true",
+        }
+        # Explicitly pass build_type 'kernel'
+        run_command(f"python3 {upload_py} '{upload_subdir}' '{dev_code}' 'kernel'", cwd=work_dir, env=upload_env)
+
+
 def main():
     load_env()
 
     parser = argparse.ArgumentParser(description="Unified Android ROM & Recovery Build Runner")
     parser.add_argument("--rom", default=None, help="ROM name: evolution (evox), lineage (los), lunaris (lunar)")
     parser.add_argument("--ver", "--version", default=None, help="Android version")
+    parser.add_argument("--kernel", default=None, help="Kernel name")
     parser.add_argument("--recovery", "--flavor", default=None, help="Recovery flavor: ofrp, twrp, all")
     parser.add_argument("--dev", "--device", default=None, help="Target device code or all")
     parser.add_argument("--variant", "--type", default=None, help="Build variant: userdebug, user, eng")
@@ -347,6 +416,44 @@ def main():
             except Exception as e:
                 print(f"\n>>> [ERROR] Failed to build {cfg['name']}: {e}")
                 failed_builds.append(f"{cfg['name']} ({target_dev})")
+
+    # Case 3: Kernel Build
+    if args.kernel:
+        kern_data = load_json_config("kernel.json")
+        kern_key = args.kernel.lower()
+        # Aliases
+        for k, v in kern_data.items():
+            if kern_key == k or kern_key in v.get("aliases", []):
+                kern_key = k
+                break
+        
+        if kern_key not in kern_data:
+            sys.exit(f"Error: Unknown Kernel '{args.kernel}'. Available: {list(kern_data.keys())}")
+            
+        kern_cfg = kern_data[kern_key]
+        ver_str = str(args.ver) if args.ver else next(iter(kern_cfg["versions"]), "")
+        if ver_str not in kern_cfg["versions"]:
+            sys.exit(f"Error: Version '{ver_str}' not configured for {kern_cfg['name']}.")
+            
+        ver_cfg = kern_cfg["versions"][ver_str]
+        all_devs = ver_cfg["devices"]
+        
+        devices_to_build = []
+        if not args.dev or args.dev.lower() == "all":
+            devices_to_build = list(all_devs.keys())
+        else:
+            dev_upper = args.dev.upper()
+            if dev_upper not in all_devs:
+                sys.exit(f"Error: Device '{dev_upper}' not found.")
+            devices_to_build = [dev_upper]
+            
+        for dev_code in devices_to_build:
+            try:
+                build_single_kernel_device(kern_cfg, ver_cfg, dev_code, sf_upload, gofile_upload)
+                success_builds.append(f"{kern_cfg['name']} {ver_str} - {dev_code}")
+            except Exception as e:
+                print(f"\n>>> [ERROR] Failed to build {kern_cfg['name']} for {dev_code}: {e}")
+                failed_builds.append(f"{kern_cfg['name']} {ver_str} - {dev_code}")
 
     # Case 2: ROM Build
     elif args.rom:

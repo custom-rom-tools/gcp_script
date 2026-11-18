@@ -13,7 +13,7 @@
     "work_dir": "/mnt/recovery/ofrp",
     "disk_mount": "/mnt/recovery",
     "disk_name": "gcp-recovery-disk",
-    "upload_subdir": "SM7125/Recovery/OrangeFox",
+    "upload_subdir": "Recovery/OrangeFox",
     "devices": {
       "RMX2061": {
         "name": "Realme 6 Pro"
@@ -42,7 +42,7 @@
     "work_dir": "/mnt/recovery/twrp",
     "disk_mount": "/mnt/recovery",
     "disk_name": "gcp-recovery-disk",
-    "upload_subdir": "SM7125/Recovery/TWRP",
+    "upload_subdir": "Recovery/TWRP",
     "devices": {
       "RMX2061": {
         "name": "Realme 6 Pro"
