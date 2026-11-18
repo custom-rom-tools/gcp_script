@@ -46,11 +46,30 @@ def get_attached_disks(vm: dict) -> list[dict]:
             result = []
             for disk in info.get("disks", []):
                 source = disk.get("source", "")
-                result.append({"name": source.rstrip("/").split("/")[-1], "device_name": disk.get("deviceName", ""), "boot": disk.get("boot", False)})
+                result.append({
+                    "name": source.rstrip("/").split("/")[-1], 
+                    "device_name": disk.get("deviceName", ""), 
+                    "boot": disk.get("boot", False)
+                })
             return result
     except Exception:
         pass
     return []
+
+def get_mount_info(vm: dict) -> dict:
+    """Returns a map of {device_name: {'mount_point': mp, 'used': used, 'free': free}}."""
+    # Run df -h to get usage info. Mapping device path to mount point.
+    cmd = "df -h | grep '^/dev/' | awk '{print $1, $3, $4, $6}'"
+    res = vm_exec(vm, cmd, check=False)
+    mounts = {}
+    if res.returncode == 0:
+        for line in res.stdout.strip().splitlines():
+            parts = line.split()
+            if len(parts) == 4:
+                # parts[0] is /dev/..., parts[1] is Used, parts[2] is Free, parts[3] is MountPoint
+                dev = parts[0].split('/')[-1]
+                mounts[dev] = {'mount_point': parts[3], 'used': parts[1], 'free': parts[2]}
+    return mounts
 
 
 def resolve_build_disk(vm: dict, target_category: str) -> dict:
