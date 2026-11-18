@@ -130,3 +130,11 @@ def format_disk_ext4(vm: dict, disk_name: str) -> bool:
         return False
     cmd = f"sudo wipefs -af /dev/disk/by-id/google-rom-storage 2>/dev/null || true; sudo mkfs.ext4 -F /dev/disk/by-id/google-rom-storage"
     return vm_exec(vm, cmd, check=False).returncode == 0
+
+def delete_disk_gcp(vm: dict, disk_name: str) -> bool:
+    """Detaches and deletes a disk from GCP."""
+    detach_disk(vm, disk_name)
+    args = ["compute", "disks", "delete", disk_name, f"--zone={vm['zone']}", "--quiet"]
+    if vm.get("project"):
+        args.append(f"--project={vm['project']}")
+    return run_gcloud(args, check=False).returncode == 0

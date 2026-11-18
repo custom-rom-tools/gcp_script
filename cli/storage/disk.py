@@ -1,5 +1,5 @@
 from cli.base import clear_screen, print_header, print_divider, pause, read_input, GREEN, CYAN, YELLOW, RED, NC
-from cli.services.disk import list_disks, get_attached_disks, attach_disk, detach_disk, format_disk_ext4
+from cli.services.disk import list_disks, get_attached_disks, attach_disk, detach_disk, format_disk_ext4, delete_disk_gcp
 
 
 def submenu_disk_manager(vm: dict):
@@ -21,12 +21,13 @@ def submenu_disk_manager(vm: dict):
         print(f" {GREEN}1){NC} Attach")
         print(f" {YELLOW}2){NC} Detach")
         print(f" {RED}3){NC} Format")
+        print(f" {RED}4){NC} Delete")
         print(f" {RED}0){NC} Back")
-        choice = read_input("\nSelect 0-3: ").strip()
+        choice = read_input("\nSelect 0-4: ").strip()
         if choice == "0":
             break
         candidates = [d for d in disks if d.get("name") not in (vm["instance"], "gcp-boot-ccache-disk")]
-        if choice in ("1", "2", "3"):
+        if choice in ("1", "2", "3", "4"):
             if not candidates:
                 print(">>> No secondary disks found.")
                 pause()
@@ -49,4 +50,8 @@ def submenu_disk_manager(vm: dict):
                 confirm = read_input(f"Type FORMAT to wipe {name}: ").strip()
                 if confirm == "FORMAT":
                     format_disk_ext4(vm, name)
+            elif choice == "4":
+                confirm = read_input(f"Type DELETE to permanently delete {name}: ").strip()
+                if confirm == "DELETE":
+                    delete_disk_gcp(vm, name)
             pause()
