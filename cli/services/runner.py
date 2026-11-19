@@ -107,7 +107,7 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
 """
 
 TMUX_CONF = r"""
-# GCP-TMUX-STYLE-V10: high-contrast dark footer, CPU/RAM/Net monitor, dynamic build pills & shortcuts
+# GCP-TMUX-STYLE-V11: high-contrast dark footer, 1s refresh, CPU/RAM/Net monitor, dynamic build pills & shortcuts
 set -g mouse on
 set -g set-clipboard on
 bind-key m set-option -g mouse
@@ -116,14 +116,14 @@ bind-key -T copy-mode MouseDown1Pane select-pane \; send-keys -X cancel
 bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 set -g history-limit 50000
-set -g status-interval 2
+set -g status-interval 1
 set -g status-style "bg=colour235,fg=colour252"
 set -g status-left-length 60
 set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_icon,#{@build_icon},⚙} #{?@build_label,#{@build_label},BUILD} #[bg=colour238,fg=colour255,bold] #{?@build_detail,#{@build_detail},#W} #[bg=colour235] "
 set -g window-status-current-format ""
 set -g window-status-format ""
 set -g status-right-length 160
-set -g status-right "#[fg=colour82,bold]Ctrl+b d #[fg=colour245]Detach #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
+set -g status-right "#[fg=colour245]Detach #[fg=colour82,bold]Ctrl+b d #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 """
 
 
@@ -157,7 +157,7 @@ def net_speed_setup_cmd() -> str:
     return f"""if ! grep -q 'GCP-NET-SPEED-V4' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '{net_b64}' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V10' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V11' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '{tmux_b64}' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
@@ -170,17 +170,17 @@ tmux bind-key -T copy-mode MouseDown1Pane select-pane \\; send-keys -X cancel 2>
 tmux bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel 2>/dev/null || true
 tmux bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel 2>/dev/null || true
 tmux set-option -g history-limit 50000 2>/dev/null || true
-tmux set-option -g status-interval 2 2>/dev/null || true
+tmux set-option -g status-interval 1 2>/dev/null || true
 tmux set-option -g status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
 tmux set-option -g status-left-length 60 2>/dev/null || true
 tmux set-option -g status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_icon,#{{@build_icon}},⚙}} #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour238,fg=colour255,bold] #{{?@build_detail,#{{@build_detail}},#W}} #[bg=colour235] ' 2>/dev/null || true
 tmux set-window-option -g window-status-current-format '' 2>/dev/null || true
 tmux set-window-option -g window-status-format '' 2>/dev/null || true
 tmux set-option -g status-right-length 160 2>/dev/null || true
-tmux set-option -g status-right '#[fg=colour82,bold]Ctrl+b d #[fg=colour245]Detach #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
+tmux set-option -g status-right '#[fg=colour245]Detach #[fg=colour82,bold]Ctrl+b d #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 tmux set-option -u -t rom-build mouse 2>/dev/null || true
 tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
-tmux set-option -t rom-build status-interval 2 2>/dev/null || true
+tmux set-option -t rom-build status-interval 1 2>/dev/null || true
 tmux set-option -t rom-build status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
 tmux set-option -t rom-build status-left-length 60 2>/dev/null || true
 tmux set-window-option -t rom-build window-status-current-format '' 2>/dev/null || true
@@ -189,7 +189,7 @@ if ! tmux show-option -t rom-build status-left 2>/dev/null | grep -q 'bg=colour'
   tmux set-option -t rom-build status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_icon,#{{@build_icon}},⚙}} #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour238,fg=colour255,bold] #{{?@build_detail,#{{@build_detail}},#W}} #[bg=colour235] ' 2>/dev/null || true
 fi
 tmux set-option -t rom-build status-right-length 160 2>/dev/null || true
-tmux set-option -t rom-build status-right '#[fg=colour82,bold]Ctrl+b d #[fg=colour245]Detach #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
+tmux set-option -t rom-build status-right '#[fg=colour245]Detach #[fg=colour82,bold]Ctrl+b d #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 """
 
 
