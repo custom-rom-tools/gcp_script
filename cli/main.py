@@ -23,7 +23,7 @@ from cli.base import (
     read_input, print_header,
 )
 from cli.services.vm import (
-    get_active_vm, start_vm, stop_vm, get_vm_info, get_vm_state,
+    get_active_vm, start_vm, stop_vm, restart_vm, get_vm_info, get_vm_state,
     check_gcloud_auth, login_gcloud,
 )
 from cli.cluster.vm import run_cluster_menu
@@ -102,21 +102,22 @@ def run_build_dashboard(vm: dict):
         print(f"  {BOLD}19){NC} VM Status & Info")
         print(f"  {BOLD}20){NC} Start VM")
         print(f"  {BOLD}21){NC} Stop VM")
-        print(f"  {BOLD}22){NC} Disk Manager")
-        print(f"  {BOLD}23){NC} Swap Manager")
-        print(f"  {BOLD}24){NC} {CYAN}Machine Type Switcher{NC}")
-        print(f"  {BOLD}25){NC} SSH Console")
+        print(f"  {BOLD}22){NC} {YELLOW}Restart VM{NC}")
+        print(f"  {BOLD}23){NC} Disk Manager")
+        print(f"  {BOLD}24){NC} Swap Manager")
+        print(f"  {BOLD}25){NC} {CYAN}Machine Type Switcher{NC}")
+        print(f"  {BOLD}26){NC} SSH Console")
         print()
         print_section("[TOOLS]")
-        print(f"  {BOLD}26){NC} Setup & Tools")
-        print(f"  {BOLD}27){NC} {CYAN}Upload Links (works while VM stopped){NC}")
-        print(f"  {BOLD}28){NC} Switch / Manage VMs")
+        print(f"  {BOLD}27){NC} Setup & Tools")
+        print(f"  {BOLD}28){NC} {CYAN}Upload Links (works while VM stopped){NC}")
+        print(f"  {BOLD}29){NC} Switch / Manage VMs")
         print()
         print(f"   {YELLOW}r){NC} Reload / Refresh Menu")
         print(f"   {RED}q){NC} Quit")
         print_divider()
 
-        choice = read_input(" Select option [1-28, r, q, default: r]: ").strip().lower()
+        choice = read_input(" Select option [1-29, r, q, default: r]: ").strip().lower()
 
         if choice in ("q", "quit", "exit"):
             print("Goodbye!")
@@ -172,18 +173,22 @@ def run_build_dashboard(vm: dict):
             stop_vm(vm)
             base.pause()
         elif choice == "22":
-            disk.submenu_disk_manager(vm)
+            clear_screen()
+            restart_vm(vm)
+            base.pause()
         elif choice == "23":
-            swap.submenu_swap_manager(vm)
+            disk.submenu_disk_manager(vm)
         elif choice == "24":
-            setup.submenu_machine_type(vm)
+            swap.submenu_swap_manager(vm)
         elif choice == "25":
-            console.submenu_ssh_console(vm)
+            setup.submenu_machine_type(vm)
         elif choice == "26":
-            setup.run_tools_menu(vm)
+            console.submenu_ssh_console(vm)
         elif choice == "27":
-            link.submenu_view_links(vm)
+            setup.run_tools_menu(vm)
         elif choice == "28":
+            link.submenu_view_links(vm)
+        elif choice == "29":
             new_vm = run_cluster_menu()
             if new_vm and new_vm.get("instance"):
                 vm = new_vm
@@ -304,7 +309,7 @@ def _print_help():
     print("  ./gcp_menu.sh build                   Build a ROM (defaults: evox/16/RMX2170)")
     print("  ./gcp_menu.sh recovery                Build a recovery (defaults: ofrp/sm7125)")
     print("  ./gcp_menu.sh kernel                  Build a kernel (defaults: A16/RMX2170)")
-    print("  ./gcp_menu.sh start | stop | status")
+    print("  ./gcp_menu.sh start | stop | restart | status")
     print("  ./gcp_menu.sh ssh                     Open an SSH shell on the VM")
     print("  ./gcp_menu.sh tmux                    Attach to the live build session")
     print("  ./gcp_menu.sh htop | top | net        Live process/network monitor")
@@ -355,6 +360,8 @@ def main():
         start_vm(vm)
     elif command == "stop":
         stop_vm(vm)
+    elif command in ("restart", "reboot"):
+        restart_vm(vm)
     elif command == "status":
         info = get_vm_info(vm, refresh=True)
         status, ip = get_vm_state(vm)

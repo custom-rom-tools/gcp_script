@@ -14,7 +14,7 @@ from cli.base import (
 from cli.services.vm import (
     get_active_vm, save_active_vm, discover_instances,
     get_default_project, ensure_gcloud_authenticated,
-    create_new_vm, delete_vm_instance, start_vm, stop_vm,
+    create_new_vm, delete_vm_instance, start_vm, stop_vm, restart_vm,
     get_region_from_zone, get_vm_boot_disk, list_disks_in_region
 )
 
@@ -365,7 +365,13 @@ def submenu_toggle_power(vms: list[dict], project: str):
                 "general_disk": target_v.get("general_disk", "gcp-general-disk"),
             }
             if target_v["status"] == "RUNNING":
-                stop_vm(target_dict)
+                action = read_input(f" Choose action for '{target_v['name']}': 1) Stop  2) Restart [default: 1, q=abort]: ").strip()
+                if action == "2":
+                    restart_vm(target_dict)
+                elif action in ("q", "quit", "exit"):
+                    continue
+                else:
+                    stop_vm(target_dict)
             else:
                 start_vm(target_dict)
             pause()
@@ -419,7 +425,7 @@ def run_cluster_menu() -> dict:
         print(f" {GREEN}1){NC} Select VM")
         print(f" {CYAN}2){NC} Create VM")
         print(f" {RED}3){NC} Delete VM")
-        print(f" {YELLOW}4){NC} Start or Stop VM")
+        print(f" {YELLOW}4){NC} Start, Stop or Restart VM")
         print(f" {MAGENTA}5){NC} Google Account")
         print(f" Enter or 0) Build Menu")
         print("")

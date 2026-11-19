@@ -936,6 +936,56 @@ def stop_vm(vm: dict) -> bool:
     return False
 
 
+def restart_vm(vm: dict) -> bool:
+    """Restart the GCP instance (graceful OS reboot with gcloud reset fallback)."""
+    from cli.base import clear_screen
+    clear_screen()
+    print("=" * 60)
+    print("                 RESTARTING GCP INSTANCE")
+    print("=" * 60)
+    status, ip = get_vm_state(vm)
+    if status != "RUNNING":
+        print(f">>> VM '{vm['instance']}' is currently powered OFF ({status}).")
+        print(">>> Starting VM...")
+        return start_vm(vm)
+
+    print(f">>> VM '{vm['instance']}' is currently RUNNING (IP: {ip}).")
+    print(">>> Sending reboot signal to VM...")
+
+    # Attempt graceful OS reboot via SSH first
+    rebooted = False
+    try:
+        res = vm_exec(vm, "sudo systemctl reboot || sudo reboot", check=False, timeout=10)
+        if res.returncode == 0:
+            rebooted = True
+    except Exception:
+        pass
+
+    if not rebooted:
+        print(">>> SSH reboot did not respond; performing GCP instance reset...")
+        run_gcloud(
+            ["compute", "instances", "reset", vm["instance"], f"--zone={vm['zone']}"] + _gcloud_scope(vm),
+            check=False,
+        )
+
+    invalidate_vm_cache(vm)
+    print(">>> Reboot triggered. Waiting for VM to reboot and SSH to become ready...")
+    time.sleep(6)
+
+    if not wait_for_ssh(vm, timeout=120):
+        print("=" * 60)
+        print(f" ✖ VM '{vm['instance']}' rebooted but SSH is not reachable yet.")
+        print("=" * 60)
+        return False
+
+    new_ip = get_vm_ip(vm)
+    print("=" * 60)
+    print(f" ✅ VM '{vm['instance']}' has been RESTARTED successfully!")
+    print(f"    External IP: {new_ip} | Status: RUNNING | SSH: OK")
+    print("=" * 60)
+    return True
+
+
 def set_machine_type(vm: dict, new_type: str) -> bool:
     """Change the instance machine type, preserving its power state."""
     print(f"\n>>> Switching {vm['instance']} to machine type: {new_type}...")
