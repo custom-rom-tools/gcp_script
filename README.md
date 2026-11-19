@@ -153,14 +153,21 @@ instead of a fragile standalone kernel checkout. Artifacts are discovered as
 
 ### Downloads
 ```bash
-./gcp_menu.sh download-rom
+./gcp_menu.sh download-rom              # Interactive file picker
 ./gcp_menu.sh download-recovery
 ./gcp_menu.sh download-kernel
 ./gcp_menu.sh download-log
+
+./gcp_menu.sh download-rom --all        # Download every matching artifact
+./gcp_menu.sh download-kernel --pick 1,3
 ```
 
-All files land in `~/Downloads`. Log downloads also create a `_clean.log` copy
-with ANSI escapes and carriage returns removed.
+ROM, recovery and kernel downloads only scan each workspace's
+`out/target/product/<device>` output tree, so unrelated archives on the data
+disks are ignored. In the interactive menu you can pick individual files
+(`1,3`), a range (`1-3`), all files (Enter/`all`), or cancel (`q`). All files
+land in `~/Downloads`. Log downloads also create a `_clean.log` copy with ANSI
+escapes and carriage returns removed.
 
 ### VM, Disk, Swap & Session Management
 ```bash

@@ -301,7 +301,7 @@ def _print_help():
     print("  ./gcp_menu.sh tmux                    Attach to the live build session")
     print("  ./gcp_menu.sh htop | top | net        Live process/network monitor")
     print("  ./gcp_menu.sh vms                     Switch active VM")
-    print("  ./gcp_menu.sh download-rom|recovery|kernel|log")
+    print("  ./gcp_menu.sh download-rom|recovery|kernel|log [--all | --pick 1,3]")
     print("  ./gcp_menu.sh create-disk [name] [size]")
     print("  ./gcp_menu.sh delete-disk [name]")
     print("  ./gcp_menu.sh attach-disk | detach-disk [name]")
@@ -487,7 +487,18 @@ def main():
     elif command in ("download-rom", "download-recovery", "download-kernel", "download-log"):
         from cli.services.download import download_artifacts
         artifact = command.rsplit("-", 1)[-1]
-        download_artifacts(vm, artifact)
+        selection = None
+        rest = sys.argv[2:]
+        for index, arg in enumerate(rest):
+            if arg == "--all":
+                selection = "all"
+            elif arg.startswith("--pick="):
+                selection = arg.split("=", 1)[1]
+            elif arg == "--pick":
+                if index + 1 >= len(rest):
+                    sys.exit("Usage: ./gcp_menu.sh download-rom [--all | --pick 1,3]")
+                selection = rest[index + 1]
+        download_artifacts(vm, artifact, selection=selection)
 
     else:
         print(f"Unknown command '{command}'.")
