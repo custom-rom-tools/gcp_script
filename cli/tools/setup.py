@@ -53,7 +53,9 @@ def submenu_watchdog(vm: dict):
 
     print(get_watchdog_status(vm))
     print()
-    answer = read_input("Re-deploy / restart watchdog service now? [y/N, default: N]: ").strip().lower()
+    answer = read_input("Re-deploy / restart watchdog service now? [y/N, default: N, q=abort]: ").strip().lower()
+    if answer in ("q", "quit", "exit"):
+        return
     if answer in ("y", "yes"):
         deploy_watchdog(vm)
     pause()
@@ -79,11 +81,23 @@ def submenu_dummy_git(vm: dict):
     print(f"   Name : {GREEN}{default_name}{NC}")
     print(f"   Email: {GREEN}{default_email}{NC}\n")
 
-    choice = read_input("Use recommended dummy identity? [Y/n, default: Y] (or 'c' for custom): ").strip().lower()
+    choice = read_input("Use recommended dummy identity? [Y/n, default: Y, q=abort] (or 'c' for custom): ").strip().lower()
+    if choice in ("q", "quit", "exit"):
+        print("Cancelled without changes.")
+        pause()
+        return
     name, email = default_name, default_email
     if choice == "c":
-        custom_name = read_input(f"Enter dummy user.name [default: {default_name}]: ").strip()
-        custom_email = read_input(f"Enter dummy user.email [default: {default_email}]: ").strip()
+        custom_name = read_input(f"Enter dummy user.name [default: {default_name}, q=abort]: ").strip()
+        if custom_name.lower() in ("q", "quit", "exit"):
+            print("Cancelled without changes.")
+            pause()
+            return
+        custom_email = read_input(f"Enter dummy user.email [default: {default_email}, q=abort]: ").strip()
+        if custom_email.lower() in ("q", "quit", "exit"):
+            print("Cancelled without changes.")
+            pause()
+            return
         name = custom_name or default_name
         email = custom_email or default_email
     elif choice in ("n", "no"):
@@ -113,8 +127,11 @@ def submenu_timezone(vm: dict):
     print(f"  {BOLD}3){NC} US Eastern ({GREEN}America/New_York{NC})")
     print(f"  {BOLD}4){NC} US Pacific ({GREEN}America/Los_Angeles{NC})")
     print(f"  {BOLD}5){NC} Custom timezone (e.g. Europe/London, Asia/Dubai)")
-    print(f"  {BOLD}0){NC} Cancel")
-    choice = read_input("Select option [1-5, default: 1 (IST)]: ").strip() or "1"
+    print()
+    print(f"  {YELLOW}r){NC} Reload / Refresh")
+    print(f"  {RED}0 / q){NC} Cancel / Back")
+    print_divider()
+    choice = read_input("Select option [1-5, r, 0/q, default: 1 (IST)]: ").strip().lower() or "1"
 
     mapping = {
         "1": "Asia/Kolkata",
@@ -122,12 +139,18 @@ def submenu_timezone(vm: dict):
         "3": "America/New_York",
         "4": "America/Los_Angeles",
     }
-    if choice == "0":
+    if choice in ("0", "q", "quit", "exit"):
         print("Timezone change cancelled.")
         pause()
         return
+    if choice in ("r", "reload", "refresh"):
+        return submenu_timezone(vm)
     if choice == "5":
-        target = read_input("Enter timezone name [default: Asia/Kolkata]: ").strip() or "Asia/Kolkata"
+        target = read_input("Enter timezone name [default: Asia/Kolkata, q=abort]: ").strip() or "Asia/Kolkata"
+        if target.lower() in ("q", "quit", "exit"):
+            print("Timezone change cancelled.")
+            pause()
+            return
     else:
         target = mapping.get(choice, choice)
 
@@ -165,14 +188,18 @@ def submenu_machine_type(vm: dict):
         print("  -----------------------------------------------------------------")
         print(f"  {GREEN}A){NC} {BOLD}Set Fastest (c2d-standard-16){NC}")
         print(f"  {GREEN}B){NC} {BOLD}Set Cheapest (t2d-standard-16){NC}")
-        print(f"  {BOLD}0){NC} Back to Main Menu")
+        print()
+        print(f"  {YELLOW}r){NC} Reload / Refresh Status")
+        print(f"  {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
         choice = read_input(
-            f"Select machine type [1-{len(MACHINE_TYPES)}, A, B, or 0]: "
+            f"Select machine type [1-{len(MACHINE_TYPES)}, A, B, r or 0/q, default: 0]: "
         ).strip().lower()
-        if choice in ("0", "q", ""):
+        if choice in ("0", "q", "quit", "exit"):
             return
+        if choice in ("r", "reload", "refresh"):
+            continue
         target_mt = ""
         if choice.isdigit() and 1 <= int(choice) <= len(MACHINE_TYPES):
             target_mt = MACHINE_TYPES[int(choice) - 1]
@@ -208,12 +235,16 @@ def run_tools_menu(vm: dict):
         print(f" {BOLD}7){NC} Google Cloud Login / Switch Account")
         print(f" {BOLD}8){NC} View Upload Links")
         print(f" {BOLD}9){NC} Open SSH Console")
-        print(f" {BOLD}0){NC} Back to Main Menu")
+        print()
+        print(f" {YELLOW}r){NC} Reload / Refresh Tools Menu")
+        print(f" {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input("Select option [0-9]: ").strip().lower()
-        if choice in ("0", "q", ""):
+        choice = read_input("Select option [0-9, r, q, default: 0]: ").strip().lower()
+        if choice in ("0", "q", "quit", "exit"):
             return
+        if choice in ("r", "reload", "refresh"):
+            continue
         if choice == "1":
             clear_screen()
             print_header("SETTING UP BUILD ENVIRONMENT")

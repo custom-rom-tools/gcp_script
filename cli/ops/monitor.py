@@ -126,12 +126,16 @@ def submenu_build_status(vm: dict):
         print(f" {CYAN}2){NC} Download Build Log (.log) to Downloads")
         print(f" {YELLOW}3){NC} Scan Log for Errors (grep FAILED with context)")
         print(f" {RED}4){NC} Stop Active Build")
-        print(f" {BOLD}0){NC} Back to Main Menu")
+        print()
+        print(f" {YELLOW}r){NC} Reload / Refresh Build Status")
+        print(f" {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input(" Select option [0-4]: ").strip().lower()
-        if choice in ("0", "q", ""):
+        choice = read_input(" Select option [0-4, r, q, default: r]: ").strip().lower()
+        if choice in ("0", "q", "quit", "exit"):
             return
+        if choice in ("r", "reload", "refresh", ""):
+            continue
         if choice == "1":
             if active:
                 follow_live_logs(vm, 400, data.get("log_path", ""))
@@ -174,12 +178,16 @@ def submenu_live_monitor(vm: dict):
         print(f" {BOLD}1){NC} {GREEN}htop{NC}      - Interactive colour CPU & RAM monitor")
         print(f" {BOLD}2){NC} {CYAN}top{NC}       - Standard UNIX process monitor")
         print(f" {BOLD}3){NC} {YELLOW}net speed{NC} - Live VM Download / Upload speed (MB/s)")
-        print(f" {BOLD}0){NC} Back to Main Menu")
+        print()
+        print(f" {YELLOW}r){NC} Reload / Refresh")
+        print(f" {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input(" Select monitor [0-3]: ").strip().lower()
-        if choice in ("0", "q", ""):
+        choice = read_input(" Select monitor [0-3, r, q, default: 0]: ").strip().lower()
+        if choice in ("0", "q", "quit", "exit"):
             return
+        if choice in ("r", "reload", "refresh"):
+            continue
         if choice not in ("1", "2", "3"):
             continue
         if not require_vm_running(vm, "monitor processes"):
@@ -209,8 +217,8 @@ def submenu_stop_build(vm: dict):
     print(processes or "None (No active compiler processes).")
     print()
 
-    answer = read_input("Are you sure you want to STOP and cancel the current build? [y/N, default: N]: ")
-    if answer.strip().lower() not in ("y", "yes"):
+    answer = read_input("Are you sure you want to STOP and cancel the current build? [y/N, default: N, q=abort]: ")
+    if answer.strip().lower() in ("q", "quit", "exit") or answer.strip().lower() not in ("y", "yes"):
         print(">>> Aborted. Build continues running.")
         pause()
         return
@@ -225,25 +233,34 @@ def submenu_stop_build(vm: dict):
 
 def submenu_vm_info(vm: dict):
     """Show GCP instance properties plus the farm specification sheet."""
-    clear_screen()
-    print_header("VM STATUS & INFO", vm["instance"])
-    info = get_vm_info(vm, refresh=True)
-    ip = get_vm_ip(vm)
-    if info:
-        machine = (info.get("machineType", "") or "").rstrip("/").split("/")[-1]
-        zone = (info.get("zone", "") or "").rstrip("/").split("/")[-1]
-        print_kv("Name", info.get("name", vm["instance"]))
-        print_kv("Status", info.get("status", "UNKNOWN"),
-                 GREEN if info.get("status") == "RUNNING" else RED)
-        print_kv("External IP", ip or "none")
-        print_kv("Machine Type", machine)
-        print_kv("Zone", zone)
-        print_kv("CPU Platform", info.get("cpuPlatform", "Unknown"))
-    else:
-        print(" Unable to retrieve instance information from GCP.")
-    print()
-    show_farm_specs(vm)
-    pause()
+    while True:
+        clear_screen()
+        print_header("VM STATUS & INFO", vm["instance"])
+        info = get_vm_info(vm, refresh=True)
+        ip = get_vm_ip(vm)
+        if info:
+            machine = (info.get("machineType", "") or "").rstrip("/").split("/")[-1]
+            zone = (info.get("zone", "") or "").rstrip("/").split("/")[-1]
+            print_kv("Name", info.get("name", vm["instance"]))
+            print_kv("Status", info.get("status", "UNKNOWN"),
+                     GREEN if info.get("status") == "RUNNING" else RED)
+            print_kv("External IP", ip or "none")
+            print_kv("Machine Type", machine)
+            print_kv("Zone", zone)
+            print_kv("CPU Platform", info.get("cpuPlatform", "Unknown"))
+        else:
+            print(" Unable to retrieve instance information from GCP.")
+        print()
+        show_farm_specs(vm)
+        print()
+        print(f"  {YELLOW}r){NC} Reload / Refresh Status")
+        print(f"  {RED}0 / q){NC} Back to Main Menu / Quit")
+        print_divider()
+        choice = read_input(" Select [r, 0/q, default: 0]: ").strip().lower()
+        if choice in ("0", "q", "quit", "exit", ""):
+            return
+        if choice in ("r", "reload", "refresh"):
+            continue
 
 
 def show_farm_specs(vm: dict) -> None:

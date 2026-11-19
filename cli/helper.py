@@ -84,14 +84,14 @@ def prompt_rom_device(rom_label: str, rom_key: str, version: str) -> str:
     print(f"   {GREEN}{all_idx}){NC} All Devices Batch "
           f"({', '.join(code for code, _ in entries)})")
     index[all_idx] = "all"
-    print(f"\n   {YELLOW}0){NC} Back to Main Menu")
+    print(f"\n   {RED}0 / q){NC} Back to Main Menu / Cancel")
     print(f"{CYAN}{'-' * 65}{NC}")
 
     def_code = entries[0][0] if entries else ""
-    choice = read_input(f" Select device [0-{all_idx}, default: 1 ({def_code})]: ").strip().lower()
+    choice = read_input(f" Select device [0-{all_idx}, q, default: 1 ({def_code})]: ").strip().lower()
     if not choice:
         choice = "1"
-    if choice in ("q", "quit", "exit"):
+    if choice in ("0", "q", "quit", "exit"):
         return ""
     return index.get(choice, "")
 
@@ -119,14 +119,14 @@ def prompt_recovery_device(recovery_label: str, recovery_key: str) -> str:
     print(f"   {YELLOW}{all_idx}){NC} All Devices Batch "
           f"({', '.join(PREFERRED_DEVICE_ORDER)})")
     index[all_idx] = "all"
-    print(f"\n   {CYAN}0){NC} Back to Main Menu")
+    print(f"\n   {RED}0 / q){NC} Back to Main Menu / Cancel")
     print(f"{CYAN}{'-' * 65}{NC}")
 
     def_rec = ordered[0][0] if ordered else "sm7125"
-    choice = read_input(f" Select target [0-{all_idx}, default: 1 ({def_rec})]: ").strip().lower()
+    choice = read_input(f" Select target [0-{all_idx}, q, default: 1 ({def_rec})]: ").strip().lower()
     if not choice:
         choice = "1"
-    if choice in ("q", "quit", "exit"):
+    if choice in ("0", "q", "quit", "exit"):
         return ""
     return index.get(choice, "")
 
@@ -142,14 +142,14 @@ def prompt_kernel_device(version: str, kernel_key: str = "atoll") -> str:
     for idx, (code, info) in enumerate(entries, 1):
         print(f"   {GREEN}{idx}){NC} {_device_label(code, info)}")
         index[str(idx)] = code
-    print(f"\n   {YELLOW}0){NC} Back to Main Menu")
+    print(f"\n   {RED}0 / q){NC} Back to Main Menu / Cancel")
     print(f"{CYAN}{'-' * 65}{NC}")
 
     def_kern = entries[0][0] if entries else ""
-    choice = read_input(f" Select device [0-{len(entries)}, default: 1 ({def_kern})]: ").strip().lower()
+    choice = read_input(f" Select device [0-{len(entries)}, q, default: 1 ({def_kern})]: ").strip().lower()
     if not choice:
         choice = "1"
-    if choice in ("q", "quit", "exit"):
+    if choice in ("0", "q", "quit", "exit"):
         return ""
     return index.get(choice, "")
 
@@ -174,38 +174,50 @@ def prompt_build_variant(default: str = "userdebug") -> str:
         print(f"  {GREEN}1){NC} eng        (Recommended)")
         print(f"  {CYAN}2){NC} userdebug  (Debug)")
         print(f"  {YELLOW}3){NC} user       (Release)")
+        print(f"  {RED}0 / q){NC} Cancel / Abort")
         mapping = {"1": "eng", "2": "userdebug", "3": "user"}
-        prompt = " Select variant [1-3, default: 1 (eng)]: "
+        prompt = " Select variant [1-3, 0/q, default: 1 (eng)]: "
     else:
         print(f"  {GREEN}1){NC} userdebug  (Recommended)")
         print(f"  {CYAN}2){NC} user       (Official Release)")
         print(f"  {YELLOW}3){NC} eng        (Debug)")
+        print(f"  {RED}0 / q){NC} Cancel / Abort")
         mapping = {"1": "userdebug", "2": "user", "3": "eng"}
-        prompt = " Select variant [1-3, default: 1 (userdebug)]: "
+        prompt = " Select variant [1-3, 0/q, default: 1 (userdebug)]: "
 
     raw = read_input(prompt).strip().lower()
+    if raw in ("0", "q", "quit", "exit"):
+        return ""
     if raw in ("", "1"):
         return default if raw == "" else mapping["1"]
     return mapping.get(raw, raw if raw in ("userdebug", "user", "eng") else default)
 
 
-def prompt_build_options(default_shutdown: bool = False) -> dict:
+def prompt_build_options(default_shutdown: bool = False) -> dict | None:
     """Prompt for upload targets and shutdown behaviour (no disk format)."""
-    print(f"\n{BOLD}Build options:{NC}")
+    print(f"\n{BOLD}Build options (or 'q' to abort):{NC}")
 
-    sf_in = read_input(" Upload to SourceForge too? [y/N, default: N]: ").strip().lower()
+    sf_in = read_input(" Upload to SourceForge too? [y/N, default: N, q=abort]: ").strip().lower()
+    if sf_in in ("q", "quit", "exit"):
+        return None
     sf_upload = sf_in in ("y", "yes")
 
-    gofile_in = read_input(" Upload to Gofile.io too? [Y/n, default: Y]: ").strip().lower()
+    gofile_in = read_input(" Upload to Gofile.io too? [Y/n, default: Y, q=abort]: ").strip().lower()
+    if gofile_in in ("q", "quit", "exit"):
+        return None
     gofile_upload = gofile_in not in ("n", "no")
 
     if default_shutdown:
-        shut_in = read_input(" Power off immediately when build ends? [Y/n, default: Y]: ").strip().lower()
+        shut_in = read_input(" Power off immediately when build ends? [Y/n, default: Y, q=abort]: ").strip().lower()
+        if shut_in in ("q", "quit", "exit"):
+            return None
         auto_shutdown = shut_in not in ("n", "no")
     else:
         shut_in = read_input(
-            " Power off immediately when build ends? [y/N, default: N]: "
+            " Power off immediately when build ends? [y/N, default: N, q=abort]: "
         ).strip().lower()
+        if shut_in in ("q", "quit", "exit"):
+            return None
         auto_shutdown = shut_in in ("y", "yes")
 
     return {
@@ -217,8 +229,10 @@ def prompt_build_options(default_shutdown: bool = False) -> dict:
 
 def confirm_action(prompt_text: str, default_yes: bool = False) -> bool:
     """Safely prompt the user for a yes/no confirmation."""
-    suffix = "Y/n" if default_yes else "y/N"
-    ans = read_input(f"{prompt_text} {suffix}: ").strip().lower()
+    suffix = "Y/n, q=abort" if default_yes else "y/N, q=abort"
+    ans = read_input(f"{prompt_text} [{suffix}]: ").strip().lower()
+    if ans in ("q", "quit", "exit"):
+        return False
     if not ans:
         return default_yes
     return ans in ("y", "yes")

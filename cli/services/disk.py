@@ -173,7 +173,11 @@ def list_disks(vm: dict) -> list[dict]:
 
 
 def disk_exists(vm: dict, disk_name: str) -> bool:
-    args = ["compute", "disks", "describe", disk_name, f"--zone={vm['zone']}"] + _project_arg(vm)
+    zone = vm.get("zone", "")
+    args = ["compute", "disks", "describe", disk_name]
+    if zone:
+        args.append(f"--zone={zone}")
+    args.extend(_project_arg(vm))
     try:
         return run_gcloud(args, check=False, timeout=30).returncode == 0
     except Exception:
@@ -181,23 +185,25 @@ def disk_exists(vm: dict, disk_name: str) -> bool:
 
 
 def get_disk_size(vm: dict, disk_name: str) -> int | None:
-    args = [
-        "compute", "disks", "describe", disk_name, f"--zone={vm['zone']}",
-        "--format=value(sizeGb)",
-    ] + _project_arg(vm)
+    zone = vm.get("zone", "")
+    args = ["compute", "disks", "describe", disk_name]
+    if zone:
+        args.append(f"--zone={zone}")
+    args.extend(["--format=value(sizeGb)"] + _project_arg(vm))
     try:
         res = run_gcloud(args, check=False, timeout=30)
         value = (res.stdout or "").strip()
         return int(float(value)) if value else None
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, Exception):
         return None
 
 
 def get_disk_users(vm: dict, disk_name: str) -> list[str]:
-    args = [
-        "compute", "disks", "describe", disk_name, f"--zone={vm['zone']}",
-        "--format=value(users[].basename().list())",
-    ] + _project_arg(vm)
+    zone = vm.get("zone", "")
+    args = ["compute", "disks", "describe", disk_name]
+    if zone:
+        args.append(f"--zone={zone}")
+    args.extend(["--format=value(users[].basename().list())"] + _project_arg(vm))
     try:
         res = run_gcloud(args, check=False, timeout=30)
         return [u.strip() for u in (res.stdout or "").split(",") if u.strip()]
@@ -588,10 +594,12 @@ def _select_disk(vm: dict, disks: list[str], title: str, action: str) -> str:
     for idx, name in enumerate(disks, 1):
         size = get_disk_size(vm, name)
         print(f" {BOLD}{idx}){NC} {name} ({size or '?'} GB - {get_disk_role_label(name, vm)})")
-    print(f" {BOLD}0){NC} Cancel")
-    choice = read_input(f"Select disk number to {action} [1-{len(disks)} or 0, default: 1]: ").strip()
+    print(f" {RED}0 / q){NC} Cancel / Abort")
+    choice = read_input(f"Select disk number to {action} [1-{len(disks)} or 0/q, default: 1]: ").strip().lower()
     if not choice:
         choice = "1"
+    if choice in ("0", "q", "quit", "exit"):
+        return ""
     if not choice.isdigit():
         return ""
     idx = int(choice)
@@ -682,16 +690,16 @@ def mount_disk_action(vm: dict, target_disk: str = "", mount_point: str = "") ->
                 status = f"{YELLOW}Not mounted{NC} (Suggested: {sugg})"
             print(f"   {GREEN}{idx}){NC} {BOLD}{d_name:<20}{NC} [{dev}] - {status}")
 
-        print(f"\n   {RED}0){NC} Cancel")
+        print(f"\n   {RED}0 / q){NC} Cancel / Abort")
         print_divider()
 
-        sel = read_input(f" Select disk 1-{len(attached)} or 0 [default: 1]: ").strip()
+        sel = read_input(f" Select disk 1-{len(attached)} or 0/q [default: 1]: ").strip().lower()
         if not sel:
             sel = "1"
+        if sel in ("0", "q", "quit", "exit"):
+            return False
         try:
             s_idx = int(sel)
-            if s_idx == 0:
-                return False
             if 1 <= s_idx <= len(attached):
                 target_disk = attached[s_idx - 1]["name"]
             else:
@@ -703,7 +711,10 @@ def mount_disk_action(vm: dict, target_disk: str = "", mount_point: str = "") ->
     meta = get_disk_meta(target_disk, vm)
     default_mp = meta.get("default_mount") or "/mnt/a16"
     if not mount_point:
-        mp_input = read_input(f"\nEnter mount point [default: {default_mp}]: ").strip()
+        mp_input = read_input(f"\nEnter mount point [default: {default_mp}, q=abort]: ").strip()
+        if mp_input.lower() in ("q", "quit", "exit"):
+            print("Mount cancelled.")
+            return False
         mount_point = mp_input or default_mp
 
     print(f"\n>>> Mounting {BOLD}{target_disk}{NC} to {BOLD}{mount_point}{NC} on VM '{vm['instance']}'...")

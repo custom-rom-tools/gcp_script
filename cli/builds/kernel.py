@@ -18,7 +18,16 @@ def submenu_atoll_kernel(vm: dict, version: str = "16"):
         return
 
     variant = prompt_build_variant("userdebug")
+    if not variant:
+        print(">>> Build cancelled.")
+        pause()
+        return
+
     options = prompt_build_options()
+    if not options:
+        print(">>> Build cancelled.")
+        pause()
+        return
     started = dispatch_build(
         vm=vm,
         target_type="kernel",

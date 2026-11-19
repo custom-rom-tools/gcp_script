@@ -16,7 +16,9 @@ from cli.services.vm import is_vm_running
 
 
 def _prompt_size(default: int) -> int:
-    raw = read_input(f" Enter swap size in GB [default: {default}]: ").strip()
+    raw = read_input(f" Enter swap size in GB [default: {default}, q=abort]: ").strip()
+    if raw.lower() in ("q", "quit", "exit"):
+        return -1
     if not raw:
         return default
     try:
@@ -42,12 +44,16 @@ def submenu_swap_manager(vm: dict):
         print(f" {BOLD}4){NC} {GREEN}Create Swap on Boot Disk (/){NC}")
         print(f" {BOLD}5){NC} {YELLOW}Turn Off All Swap (swapoff -a){NC}")
         print(f" {BOLD}6){NC} {RED}Delete Swapfile{NC}")
-        print(f" {BOLD}0){NC} Back to Main Menu")
+        print()
+        print(f" {YELLOW}r){NC} Reload / Refresh Swap Status")
+        print(f" {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input(" Select option [0-6]: ").strip().lower()
-        if choice in ("0", "q", ""):
+        choice = read_input(" Select option [0-6, r, q, default: 0]: ").strip().lower()
+        if choice in ("0", "q", "quit", "exit"):
             return
+        if choice in ("r", "reload", "refresh"):
+            continue
 
         if choice in ("1", "2", "3"):
             if not is_vm_running(vm):
@@ -56,7 +62,11 @@ def submenu_swap_manager(vm: dict):
                 continue
             mount = {"1": "/mnt/a16", "2": "/mnt/a17", "3": "/mnt/recovery"}[choice]
             size = _prompt_size(16)
-            if size <= 0:
+            if size < 0:
+                print(">>> Swap creation cancelled.")
+                pause()
+                continue
+            if size == 0:
                 print(">>> Error: Swap size must be a positive number.")
                 pause()
                 continue
@@ -69,7 +79,11 @@ def submenu_swap_manager(vm: dict):
                 pause()
                 continue
             size = _prompt_size(4)
-            if size <= 0:
+            if size < 0:
+                print(">>> Swap creation cancelled.")
+                pause()
+                continue
+            if size == 0:
                 print(">>> Error: Swap size must be a positive number.")
                 pause()
                 continue

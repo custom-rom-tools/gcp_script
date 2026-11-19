@@ -10,7 +10,16 @@ from cli.services.runner import dispatch_build
 
 def _run_recovery_build(vm: dict, name: str, label: str, device: str) -> None:
     variant = prompt_build_variant("eng")
+    if not variant:
+        print(">>> Build cancelled.")
+        pause()
+        return
+
     options = prompt_build_options()
+    if not options:
+        print(">>> Build cancelled.")
+        pause()
+        return
     started = dispatch_build(
         vm=vm,
         target_type="recovery",

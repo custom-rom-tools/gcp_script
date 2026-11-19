@@ -46,12 +46,18 @@ def submenu_disk_manager(vm: dict):
         print()
         print(f" {BOLD}[INFO]{NC}")
         print(f"  {CYAN}10){NC} Check Disk Space & Mounts")
-        print(f"  {BOLD}0){NC} Back to Main Menu")
+        print()
+        print(f"  {YELLOW}r){NC} Reload / Refresh Disks")
+        print(f"  {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input(" Select option [0-10, default: 0]: ").strip().lower()
-        if choice in ("0", "q", ""):
+        choice = read_input(" Select option [0-10, r, q, default: 0]: ").strip().lower()
+        if choice in ("0", "q", "quit", "exit"):
             return
+        if choice in ("r", "reload", "refresh"):
+            from cli.services.vm import invalidate_vm_cache
+            invalidate_vm_cache(vm)
+            continue
         if choice in ("1", "2", "3", "4"):
             preset_map = {
                 "1": general,
@@ -64,12 +70,20 @@ def submenu_disk_manager(vm: dict):
             default_dsize = preset["size_gb"]
             desc = preset.get("description", "Dedicated storage for ROM builds")
             print(f"\n{BOLD}--- Create & Link {default_dname} ---{NC}")
-            in_dname = read_input(f"Enter disk name [default: {default_dname}]: ").strip()
+            in_dname = read_input(f"Enter disk name [default: {default_dname}, q=abort]: ").strip()
+            if in_dname.lower() in ("q", "quit", "exit"):
+                print(">>> Disk creation cancelled.")
+                pause()
+                continue
             target_dname = in_dname or default_dname
-            in_dsize = read_input(f"Enter disk size in GB [default: {default_dsize}]: ").strip()
+            in_dsize = read_input(f"Enter disk size in GB [default: {default_dsize}, q=abort]: ").strip()
+            if in_dsize.lower() in ("q", "quit", "exit"):
+                print(">>> Disk creation cancelled.")
+                pause()
+                continue
             target_dsize = int(in_dsize) if in_dsize.isdigit() and int(in_dsize) > 0 else default_dsize
-            conf = read_input(f"Proceed with creating '{target_dname}' ({target_dsize}GB)? [Y/n, default: Y]: ").strip().lower()
-            if conf not in ("n", "no"):
+            conf = read_input(f"Proceed with creating '{target_dname}' ({target_dsize}GB)? [Y/n, default: Y, q=abort]: ").strip().lower()
+            if conf not in ("n", "no", "q", "quit", "exit"):
                 create_and_attach_disk(vm, target_dname, target_dsize, desc)
             else:
                 print(">>> Disk creation cancelled.")

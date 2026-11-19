@@ -108,7 +108,7 @@ def run_build_dashboard(vm: dict):
         print(f"  {BOLD}27){NC} {CYAN}Upload Links (works while VM stopped){NC}")
         print(f"  {BOLD}28){NC} Switch / Manage VMs")
         print()
-        print(f"   {YELLOW}r){NC} Refresh Menu")
+        print(f"   {YELLOW}r){NC} Reload / Refresh Menu")
         print(f"   {RED}q){NC} Quit")
         print_divider()
 
@@ -117,7 +117,7 @@ def run_build_dashboard(vm: dict):
         if choice in ("q", "quit", "exit"):
             print("Goodbye!")
             sys.exit(0)
-        if choice in ("r", ""):
+        if choice in ("r", "reload", "refresh", ""):
             reload_all()
             continue
 
