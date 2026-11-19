@@ -302,19 +302,6 @@ def get_active_vm() -> dict:
                 "machine_type": match.get("machine_type", ""),
             }
 
-    env_instance = os.environ.get("GCP_INSTANCE", "").strip()
-    env_zone = os.environ.get("GCP_ZONE", "").strip()
-    env_disk = os.environ.get("GCP_GENERAL_DISK", "").strip()
-    env_machine = os.environ.get("GCP_MACHINE_TYPE", "").strip()
-    if env_instance and env_zone:
-        return {
-            "instance": env_instance,
-            "zone": env_zone,
-            "project": project,
-            "general_disk": env_disk or DEFAULT_GENERAL_DISK,
-            "machine_type": env_machine,
-        }
-
     # Fallback to first RUNNING instance, or first instance
     if instances:
         chosen = next((v for v in instances if v["status"] == "RUNNING"), instances[0])
