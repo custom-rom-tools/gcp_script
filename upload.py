@@ -23,6 +23,34 @@ SF_PROJECT = "realme-atoll"
 SF_USER = "nikhilpal2705"
 SF_HOST = "frs.sourceforge.net"
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+CONFIG_DIR = SCRIPT_DIR.parent / "configs"
+
+
+def load_config_devices() -> tuple[list[str], str]:
+    """Load device codes and default recovery device from JSON configuration."""
+    devices: list[str] = []
+    default_recovery = ""
+    for filename in ("rom.json", "recovery.json"):
+        try:
+            data = json.loads((CONFIG_DIR / filename).read_text(encoding="utf-8"))
+            if filename == "rom.json":
+                for rom_cfg in data.values():
+                    for ver_cfg in rom_cfg.get("versions", {}).values():
+                        for code in ver_cfg.get("devices", {}):
+                            if code not in devices:
+                                devices.append(code)
+            else:
+                for rec_cfg in data.values():
+                    for code in rec_cfg.get("devices", {}):
+                        if code not in devices:
+                            devices.append(code)
+                        if not default_recovery:
+                            default_recovery = code
+        except (OSError, json.JSONDecodeError):
+            pass
+    return devices, default_recovery
+
 
 def get_sf_key() -> Path | None:
     """
@@ -225,6 +253,29 @@ def discover_candidates(search_dir: Path, build_type: str, remote_subdir: str = 
                 chosen.sort(key=lambda x: x.stat().st_mtime, reverse=True)
                 candidates.append(chosen[0])
 
+        case "kernel":
+            all_imgs = list(search_dir.glob("*.img"))
+            if not all_imgs and search_dir.name == "product":
+                all_imgs = list(search_dir.glob("*/*.img"))
+            imgs = [
+                i for i in all_imgs
+                if i.name.lower() == "boot.img"
+                or i.stem.lower().startswith("boot-")
+                or i.stem.lower().startswith("boot_")
+            ]
+            if not imgs:
+                imgs = [
+                    i for i in all_imgs
+                    if not any(
+                        skip in i.name.lower()
+                        for skip in ["recovery", "dtbo", "logo", "vbmeta", "super",
+                                     "vendor_boot", "init_boot"]
+                    )
+                ]
+            if imgs:
+                imgs.sort(key=get_build_sort_key, reverse=True)
+                candidates.append(imgs[0])
+
         case "rom" | _:
             all_zips = list(search_dir.glob("*.zip"))
             if not all_zips and search_dir.name == "product":
@@ -365,12 +416,12 @@ def normalize_recovery_artifact(artifact: Path, remote_subdir: str = "", target_
         return artifact
 
     # Determine device
-    known_devs = ["RMX2170", "RMX2061", "RMX3081", "sm7125"]
+    known_devs, default_recovery = load_config_devices()
     search_space = f"{remote_subdir} {target_device} {artifact.parent.name} {artifact.name}"
-    dev = "sm7125"
+    dev = default_recovery
     for d in known_devs:
         if re.search(rf"\b{re.escape(d)}\b", search_space, re.IGNORECASE):
-            dev = "sm7125" if d.lower() == "sm7125" else d.upper()
+            dev = d
             break
 
     # Generate timestamp from file mtime or today
@@ -743,7 +794,7 @@ def main():
 
     explicit_type = ""
     extra_start = 3
-    if len(sys.argv) > 3 and sys.argv[3].lower() in ["rom", "recovery"]:
+    if len(sys.argv) > 3 and sys.argv[3].lower() in ["rom", "recovery", "kernel"]:
         explicit_type = sys.argv[3].lower()
         extra_start = 4
 
