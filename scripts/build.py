@@ -290,21 +290,29 @@ def upload_artifacts(
         print(">>> [WARN] upload.py is missing; artifacts were not uploaded.", flush=True)
         return False
 
+    uploader_cmd = [
+        "python3",
+        shlex.quote(str(uploader)),
+        shlex.quote(remote_subdir),
+        shlex.quote(device),
+        shlex.quote(build_type),
+    ]
+    if sf_upload:
+        uploader_cmd.append("--sf")
+    else:
+        uploader_cmd.append("--no-sf")
+    if gofile_upload:
+        uploader_cmd.append("--gofile")
+    else:
+        uploader_cmd.append("--no-gofile")
+
     env = {
         "SF_UPLOAD": "true" if sf_upload else "false",
         "SKIP_GOFILE": "false" if gofile_upload else "true",
     }
     print(f"\n>>> Uploading artifacts to {remote_subdir}...", flush=True)
     rc = run_command(
-        " ".join(
-            [
-                "python3",
-                shlex.quote(str(uploader)),
-                shlex.quote(remote_subdir),
-                shlex.quote(device),
-                shlex.quote(build_type),
-            ]
-        ),
+        " ".join(uploader_cmd),
         cwd=work_dir,
         check=False,
         env=env,

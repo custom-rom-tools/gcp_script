@@ -568,7 +568,11 @@ def dispatch_build(
                 "--variant", variant]
     if sf_upload:
         args.append("--sf")
-    if not gofile_upload:
+    else:
+        args.append("--no-sf")
+    if gofile_upload:
+        args.append("--gofile")
+    else:
         args.append("--no-gofile")
     command = " ".join(shlex.quote(a) for a in args)
 

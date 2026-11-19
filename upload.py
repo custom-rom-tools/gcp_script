@@ -55,12 +55,11 @@ def load_config_devices() -> tuple[list[str], str]:
 def get_sf_key() -> Path | None:
     """
     Resolve SourceForge SSH private key:
-    1. If SF_KEY is provided: decode base64 key and use it.
-    2. Else if SF_UPLOAD is truthy: look in persistent SSH locations.
-    3. Otherwise: skip SourceForge upload.
+    1. If SF_KEY is provided in environment: decode base64 key to /tmp/sf_key.
+    2. Else look in persistent SSH locations (~/.ssh/crave_sf, etc.).
+    3. If no key found: return None.
     """
     sf_key_b64 = os.environ.get("SF_KEY", "").strip()
-    sf_upload = os.environ.get("SF_UPLOAD", "").strip().lower()
 
     if sf_key_b64:
         key_file = Path("/tmp/sf_key")
@@ -73,26 +72,23 @@ def get_sf_key() -> Path | None:
             print(f">>> [WARN] Failed to decode base64 SF_KEY: {e}")
             return None
 
-    if sf_upload in ("1", "true", "yes", "on"):
-        candidate_keys = [
-            Path.home() / ".ssh" / "crave_sf",
-            Path.home() / ".ssh" / "sf_key",
-            Path("/mnt/a16/crave_sf"),
-            Path("/mnt/a17/crave_sf"),
-            Path("/tmp/sf_key"),
-        ]
-        for key_path in candidate_keys:
-            if key_path.is_file() and key_path.stat().st_size > 0:
-                try:
-                    key_path.chmod(0o600)
-                except Exception:
-                    pass
-                print(f">>> [SF KEY] Using key: {key_path}")
-                return key_path
+    candidate_keys = [
+        Path.home() / ".ssh" / "crave_sf",
+        Path.home() / ".ssh" / "sf_key",
+        Path("/mnt/a16/crave_sf"),
+        Path("/mnt/a17/crave_sf"),
+        Path("/tmp/sf_key"),
+    ]
+    for key_path in candidate_keys:
+        if key_path.is_file() and key_path.stat().st_size > 0:
+            try:
+                key_path.chmod(0o600)
+            except Exception:
+                pass
+            print(f">>> [SF KEY] Using key: {key_path}")
+            return key_path
 
-        print(">>> [WARN] SF_UPLOAD is enabled, but crave_sf key was not found. Skipping SourceForge.")
-        return None
-
+    print(">>> [WARN] SourceForge upload enabled, but crave_sf key or SF_KEY was not found. Skipping SourceForge.")
     return None
 
 
@@ -785,21 +781,38 @@ def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> Non
         print(f">>> [WARN] Failed to write {vm_log}: {e}")
 
 def main():
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <remote_subdir> <device_or_path> [build_type] [extra_files...]")
+    args = sys.argv[1:]
+    do_sf = None
+    do_gofile = None
+
+    filtered_args = []
+    for arg in args:
+        if arg == "--sf":
+            do_sf = True
+        elif arg == "--no-sf":
+            do_sf = False
+        elif arg == "--gofile":
+            do_gofile = True
+        elif arg == "--no-gofile":
+            do_gofile = False
+        else:
+            filtered_args.append(arg)
+
+    if len(filtered_args) < 2:
+        print(f"Usage: {sys.argv[0]} <remote_subdir> <device_or_path> [build_type] [extra_files...] [--sf|--no-sf] [--gofile|--no-gofile]")
         sys.exit(1)
 
-    remote_subdir = sys.argv[1].strip("/")
-    target_arg = sys.argv[2]
+    remote_subdir = filtered_args[0].strip("/")
+    target_arg = filtered_args[1]
 
     explicit_type = ""
-    extra_start = 3
-    if len(sys.argv) > 3 and sys.argv[3].lower() in ["rom", "recovery", "kernel"]:
-        explicit_type = sys.argv[3].lower()
-        extra_start = 4
+    extra_start = 2
+    if len(filtered_args) > 2 and filtered_args[2].lower() in ["rom", "recovery", "kernel"]:
+        explicit_type = filtered_args[2].lower()
+        extra_start = 3
 
     build_type = explicit_type or ("recovery" if any(k in remote_subdir.lower() for k in ["recovery", "twrp", "orangefox", "ofrp"]) else "rom")
-    raw_inputs = [target_arg] + sys.argv[extra_start:]
+    raw_inputs = [target_arg] + filtered_args[extra_start:]
 
     files = resolve_artifacts(raw_inputs, build_type=build_type, remote_subdir=remote_subdir)
     if not files:
@@ -814,17 +827,31 @@ def main():
         except Exception as e:
             print(f" - {f.name} (error reading size: {e})")
 
+    # Determine SourceForge upload toggle
+    if do_sf is None:
+        sf_env = os.environ.get("SF_UPLOAD", "").strip().lower()
+        do_sf = sf_env in ("1", "true", "yes", "on")
+
+    # Determine Gofile upload toggle
+    if do_gofile is None:
+        skip_gofile = os.environ.get("SKIP_GOFILE", "").strip().lower() in ("1", "true", "yes", "on")
+        do_gofile = not skip_gofile
+
     uploaded_links: list[tuple[str, str, str]] = []
 
-    key_file = get_sf_key()
-    if key_file:
-        sf_url = upload_sf(files, remote_subdir, key_file)
-        if sf_url:
-            uploaded_links.append(("SourceForge", remote_subdir, sf_url))
+    if do_sf:
+        key_file = get_sf_key()
+        if key_file:
+            sf_url = upload_sf(files, remote_subdir, key_file)
+            if sf_url:
+                uploaded_links.append(("SourceForge", remote_subdir, sf_url))
+    else:
+        print("\n>>> [SOURCEFORGE] Skipped (not enabled for this build).")
 
-    skip_gofile = os.environ.get("SKIP_GOFILE", "").strip().lower() in ("1", "true", "yes")
-    if not skip_gofile:
+    if do_gofile:
         uploaded_links.extend(upload_fallback(files, remote_subdir=remote_subdir))
+    else:
+        print("\n>>> [GOFILE] Skipped (not enabled for this build).")
 
     record_links(uploaded_links, remote_subdir)
 
