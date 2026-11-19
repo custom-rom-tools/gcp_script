@@ -315,7 +315,7 @@ echo "Auto-Idle Shutdown Watchdog active (30 min threshold)."
 # Install live network speed reporter for tmux & dashboards
 sudo tee /usr/local/bin/vm_net_speed.sh > /dev/null << 'EOF_NETSPEED'
 #!/usr/bin/env bash
-# GCP-NET-SPEED-V3
+# GCP-NET-SPEED-V4
 MODE="$1"
 STATE_FILE="/tmp/vm_net_speed_$(id -u).state"
 
@@ -346,7 +346,7 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
   function fmt(b) {
     if (b >= 1048576) return sprintf("%.1f MB/s", b / 1048576);
     if (b >= 1024)    return sprintf("%.0f KB/s", b / 1024);
-    return sprintf("%.0f B/s", b);
+    return "0 KB/s";
   }
   BEGIN {
     d_tot = cpu_tot - prev_cpu_tot;
@@ -367,8 +367,8 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
 
     dt = now_t - prev_t;
     if (prev_t <= 0 || dt <= 0 || dt > 60 || rx < prev_rx || tx < prev_tx) {
-      dl_str = "DL --";
-      ul_str = "UL --";
+      dl_str = "DL 0 KB/s";
+      ul_str = "UL 0 KB/s";
     } else {
       dl_str = sprintf("DL %s", fmt((rx - prev_rx) / dt));
       ul_str = sprintf("UL %s", fmt((tx - prev_tx) / dt));
@@ -393,11 +393,11 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
 EOF_NETSPEED
 sudo chmod +x /usr/local/bin/vm_net_speed.sh
 
-if ! grep -q "GCP-TMUX-STYLE-V9" /etc/tmux.conf 2>/dev/null; then
+if ! grep -q "GCP-TMUX-STYLE-V10" /etc/tmux.conf 2>/dev/null; then
   sudo sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   sudo tee -a /etc/tmux.conf > /dev/null << 'EOF_TMUX'
 
-# GCP-TMUX-STYLE-V9: high-contrast dark footer, CPU/RAM/Net monitor, dynamic build pills & shortcuts
+# GCP-TMUX-STYLE-V10: high-contrast dark footer, CPU/RAM/Net monitor, dynamic build pills & shortcuts
 set -g mouse on
 set -g set-clipboard on
 bind-key m set-option -g mouse
@@ -413,7 +413,7 @@ set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_icon,#{@build_ico
 set -g window-status-current-format ""
 set -g window-status-format ""
 set -g status-right-length 160
-set -g status-right "#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
+set -g status-right "#[fg=colour82,bold]Ctrl+b d #[fg=colour245]Detach #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 EOF_TMUX
 fi
 

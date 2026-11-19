@@ -29,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REMOTE_FARM = "~/.gcp_farm"
 
 NET_SPEED_SCRIPT = r"""#!/usr/bin/env bash
-# GCP-NET-SPEED-V3
+# GCP-NET-SPEED-V4
 MODE="$1"
 STATE_FILE="/tmp/vm_net_speed_$(id -u).state"
 
@@ -60,7 +60,7 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
   function fmt(b) {
     if (b >= 1048576) return sprintf("%.1f MB/s", b / 1048576);
     if (b >= 1024)    return sprintf("%.0f KB/s", b / 1024);
-    return sprintf("%.0f B/s", b);
+    return "0 KB/s";
   }
   BEGIN {
     d_tot = cpu_tot - prev_cpu_tot;
@@ -81,8 +81,8 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
 
     dt = now_t - prev_t;
     if (prev_t <= 0 || dt <= 0 || dt > 60 || rx < prev_rx || tx < prev_tx) {
-      dl_str = "DL --";
-      ul_str = "UL --";
+      dl_str = "DL 0 KB/s";
+      ul_str = "UL 0 KB/s";
     } else {
       dl_str = sprintf("DL %s", fmt((rx - prev_rx) / dt));
       ul_str = sprintf("UL %s", fmt((tx - prev_tx) / dt));
@@ -107,7 +107,7 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
 """
 
 TMUX_CONF = r"""
-# GCP-TMUX-STYLE-V9: high-contrast dark footer, CPU/RAM/Net monitor, dynamic build pills & shortcuts
+# GCP-TMUX-STYLE-V10: high-contrast dark footer, CPU/RAM/Net monitor, dynamic build pills & shortcuts
 set -g mouse on
 set -g set-clipboard on
 bind-key m set-option -g mouse
@@ -123,7 +123,7 @@ set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_icon,#{@build_ico
 set -g window-status-current-format ""
 set -g window-status-format ""
 set -g status-right-length 160
-set -g status-right "#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
+set -g status-right "#[fg=colour82,bold]Ctrl+b d #[fg=colour245]Detach #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 """
 
 
@@ -154,10 +154,10 @@ def net_speed_setup_cmd() -> str:
     """Shell snippet installing the net-speed helper and tmux styling."""
     net_b64 = base64.b64encode(NET_SPEED_SCRIPT.encode()).decode()
     tmux_b64 = base64.b64encode(TMUX_CONF.encode()).decode()
-    return f"""if ! grep -q 'GCP-NET-SPEED-V3' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
+    return f"""if ! grep -q 'GCP-NET-SPEED-V4' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '{net_b64}' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V9' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V10' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '{tmux_b64}' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
@@ -177,7 +177,7 @@ tmux set-option -g status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_icon
 tmux set-window-option -g window-status-current-format '' 2>/dev/null || true
 tmux set-window-option -g window-status-format '' 2>/dev/null || true
 tmux set-option -g status-right-length 160 2>/dev/null || true
-tmux set-option -g status-right '#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
+tmux set-option -g status-right '#[fg=colour82,bold]Ctrl+b d #[fg=colour245]Detach #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 tmux set-option -u -t rom-build mouse 2>/dev/null || true
 tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
 tmux set-option -t rom-build status-interval 2 2>/dev/null || true
@@ -189,7 +189,7 @@ if ! tmux show-option -t rom-build status-left 2>/dev/null | grep -q 'bg=colour'
   tmux set-option -t rom-build status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_icon,#{{@build_icon}},⚙}} #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour238,fg=colour255,bold] #{{?@build_detail,#{{@build_detail}},#W}} #[bg=colour235] ' 2>/dev/null || true
 fi
 tmux set-option -t rom-build status-right-length 160 2>/dev/null || true
-tmux set-option -t rom-build status-right '#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
+tmux set-option -t rom-build status-right '#[fg=colour82,bold]Ctrl+b d #[fg=colour245]Detach #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 """
 
 

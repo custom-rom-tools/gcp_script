@@ -272,23 +272,9 @@ def discover_instances(project: str = "", refresh: bool = False) -> list[dict]:
 
 
 def get_active_vm() -> dict:
-    """Resolve the active target VM from env, ~/.gcp_active_vm or discovery."""
+    """Resolve the active target VM from ~/.gcp_active_vm, discovery, or env fallback."""
     load_local_env()
     project = get_default_project()
-
-    env_instance = os.environ.get("GCP_INSTANCE", "").strip()
-    env_zone = os.environ.get("GCP_ZONE", "").strip()
-    env_disk = os.environ.get("GCP_GENERAL_DISK", "").strip()
-    env_machine = os.environ.get("GCP_MACHINE_TYPE", "").strip()
-    if env_instance and env_zone:
-        return {
-            "instance": env_instance,
-            "zone": env_zone,
-            "project": project,
-            "general_disk": env_disk or DEFAULT_GENERAL_DISK,
-            "machine_type": env_machine,
-        }
-
     instances = discover_instances(project)
 
     saved: dict[str, str] = {}
@@ -304,19 +290,33 @@ def get_active_vm() -> dict:
         except OSError:
             pass
 
-    # If instances exist in the project, validate saved instance against real instances
+    # If user selected an active VM via Switch/Manage VMs, respect that selection
+    if instances and saved.get("instance"):
+        match = next((v for v in instances if v["name"] == saved["instance"]), None)
+        if match:
+            return {
+                "instance": match["name"],
+                "zone": match["zone"],
+                "project": match.get("project") or project,
+                "general_disk": match.get("general_disk") or DEFAULT_GENERAL_DISK,
+                "machine_type": match.get("machine_type", ""),
+            }
+
+    env_instance = os.environ.get("GCP_INSTANCE", "").strip()
+    env_zone = os.environ.get("GCP_ZONE", "").strip()
+    env_disk = os.environ.get("GCP_GENERAL_DISK", "").strip()
+    env_machine = os.environ.get("GCP_MACHINE_TYPE", "").strip()
+    if env_instance and env_zone:
+        return {
+            "instance": env_instance,
+            "zone": env_zone,
+            "project": project,
+            "general_disk": env_disk or DEFAULT_GENERAL_DISK,
+            "machine_type": env_machine,
+        }
+
+    # Fallback to first RUNNING instance, or first instance
     if instances:
-        if saved.get("instance"):
-            match = next((v for v in instances if v["name"] == saved["instance"]), None)
-            if match:
-                return {
-                    "instance": match["name"],
-                    "zone": match["zone"],
-                    "project": match.get("project") or project,
-                    "general_disk": match.get("general_disk") or DEFAULT_GENERAL_DISK,
-                    "machine_type": match.get("machine_type", ""),
-                }
-        # Fallback to first RUNNING instance, or first instance
         chosen = next((v for v in instances if v["status"] == "RUNNING"), instances[0])
         save_active_vm(chosen["name"], chosen["zone"], chosen["project"], chosen["general_disk"],
                        chosen.get("machine_type", ""))
