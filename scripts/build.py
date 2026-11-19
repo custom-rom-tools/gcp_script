@@ -210,23 +210,42 @@ def clean_sources(work_dir: Path) -> None:
 
 
 def sync_sources(work_dir: Path) -> None:
-    """Run ``repo sync`` with four attempts and a clean between failures."""
+    """Run ``repo sync`` with adaptive parallelism and backoff on rate limits."""
     nproc = os.cpu_count() or 16
-    sync_cmd = (
-        f"repo sync -c -j{nproc} --force-sync --no-clone-bundle --no-tags"
-    )
-    for attempt in range(1, 5):
+    has_gitcookies = (Path.home() / ".gitcookies").is_file()
+
+    # Dynamic tiered job parallelism and backoff delays:
+    # 1. Unauthenticated requests to android.googlesource.com from GCP are capped by Google's
+    #    anonymous burst rate limit. Starting at -j8 avoids immediate burst quota trips.
+    #    If authenticated via .gitcookies, personal quota allows full nproc.
+    # 2. On rate limits (429) or transient network drops, progressively step down jobs:
+    #    e.g. 8 (or 16) -> 4 -> 2 -> 1, giving Google's token bucket time to refill.
+    initial_jobs = min(nproc, 16 if has_gitcookies else 8)
+    retry_jobs = [initial_jobs, 4, 2, 1]
+    retry_delays = [45, 60, 90]
+
+    for attempt, jobs in enumerate(retry_jobs, start=1):
+        sync_cmd = (
+            f"repo sync -c -j{jobs} --force-sync --no-clone-bundle --no-tags --retry-fetches=3"
+        )
+        print(f"\n>>> [SYNC] Running repo sync with -j{jobs} (attempt {attempt}/{len(retry_jobs)})...", flush=True)
         rc = run_command(sync_cmd, cwd=work_dir, check=False, pty=True)
         if rc == 0:
+            print(f">>> [SYNC] Repository synchronization completed successfully.", flush=True)
             return
-        print(
-            f">>> [WARN] repo sync failed (attempt {attempt}/4, possible HTTP "
-            f"429 rate limit or stale lock); retrying in 60s...",
-            flush=True,
-        )
-        time.sleep(60)
-        clean_sources(work_dir)
-    raise RuntimeError("repo sync failed after 4 attempts.")
+
+        if attempt < len(retry_jobs):
+            delay = retry_delays[attempt - 1]
+            next_jobs = retry_jobs[attempt]
+            print(
+                f"\n>>> [WARN] repo sync failed (attempt {attempt}/{len(retry_jobs)}, possible HTTP 429 rate limit).\n"
+                f">>> Adaptive backoff: Cleaning locks, waiting {delay}s, and lowering concurrency to -j{next_jobs}...",
+                flush=True,
+            )
+            time.sleep(delay)
+            clean_sources(work_dir)
+
+    raise RuntimeError(f"repo sync failed after {len(retry_jobs)} attempts.")
 
 
 def clone_local_manifest(work_dir: Path, url: str, branch: str) -> None:
@@ -244,7 +263,7 @@ def clone_local_manifest(work_dir: Path, url: str, branch: str) -> None:
 def repo_init(work_dir: Path, url: str, branch: str, *, git_lfs: bool = False) -> None:
     lfs = " --git-lfs" if git_lfs else ""
     run_command(
-        f"repo init -u {shlex.quote(url)} -b {shlex.quote(branch)}{lfs}",
+        f"repo init -q -u {shlex.quote(url)} -b {shlex.quote(branch)}{lfs}",
         cwd=work_dir,
         label=f">>> Initializing repo {url} [{branch}]",
     )

@@ -6,16 +6,14 @@ Environment setup, SourceForge key, idle watchdog, git identity, timezone,
 
 from __future__ import annotations
 
-import random
-
 from cli.base import (
     clear_screen, print_divider, print_header, pause, read_input,
     GREEN, CYAN, YELLOW, RED, BOLD, NC,
 )
 from cli.services.tool import (
-    upload_env_file, upload_sf_key, configure_dummy_git, set_vm_timezone,
+    upload_env_file, upload_sf_key, configure_gitcookies, set_vm_timezone,
     setup_environment, deploy_watchdog,
-    get_git_identity, get_vm_timezone, get_watchdog_status,
+    get_vm_timezone, get_watchdog_status,
 )
 from cli.services.vm import (
     is_vm_running, get_instance_machine_type, get_vm_info, set_machine_type,
@@ -55,54 +53,6 @@ def submenu_watchdog(vm: dict):
         return
     if answer in ("y", "yes"):
         deploy_watchdog(vm)
-    pause()
-
-
-def submenu_dummy_git(vm: dict):
-    """Configure a dummy git identity to avoid GitHub rate limits."""
-    clear_screen()
-    print_header("CONFIGURE GIT DUMMY IDENTITY")
-    if not is_vm_running(vm):
-        print(">>> VM is powered OFF. Start it first.")
-        pause()
-        return
-
-    current_name, current_email = get_git_identity(vm)
-    print(f" Current user.name : {YELLOW}{current_name or '[Not Set]'}{NC}")
-    print(f" Current user.email: {YELLOW}{current_email or '[Not Set]'}{NC}\n")
-
-    rand_id = f"{random.randint(1000, 9999)}"
-    default_name = "Android Builder"
-    default_email = f"builder-{rand_id}@android-build.org"
-    print(" Recommended dummy identity:")
-    print(f"   Name : {GREEN}{default_name}{NC}")
-    print(f"   Email: {GREEN}{default_email}{NC}\n")
-
-    choice = read_input("Use recommended dummy identity? [Y/n, default: Y, q=abort] (or 'c' for custom): ").strip().lower()
-    if choice in ("q", "quit", "exit"):
-        print("Cancelled without changes.")
-        pause()
-        return
-    name, email = default_name, default_email
-    if choice == "c":
-        custom_name = read_input(f"Enter dummy user.name [default: {default_name}, q=abort]: ").strip()
-        if custom_name.lower() in ("q", "quit", "exit"):
-            print("Cancelled without changes.")
-            pause()
-            return
-        custom_email = read_input(f"Enter dummy user.email [default: {default_email}, q=abort]: ").strip()
-        if custom_email.lower() in ("q", "quit", "exit"):
-            print("Cancelled without changes.")
-            pause()
-            return
-        name = custom_name or default_name
-        email = custom_email or default_email
-    elif choice in ("n", "no"):
-        print("Cancelled without changes.")
-        pause()
-        return
-
-    configure_dummy_git(vm, name, email)
     pause()
 
 
@@ -218,6 +168,30 @@ def submenu_machine_type(vm: dict):
         pause()
 
 
+def submenu_gitcookies(vm: dict):
+    """Configure Google Source .gitcookies to bypass shared anonymous 429 rate limits."""
+    clear_screen()
+    print_header("CONFIGURE GOOGLE SOURCE AUTH (.gitcookies)")
+    if not is_vm_running(vm):
+        print(">>> VM is powered OFF. Start it first.")
+        pause()
+        return
+
+    print(" Google Source (android.googlesource.com) rate-limits anonymous requests from GCP VMs.")
+    print(" To bypass rate limits and get personal quota:")
+    print(f"  1. In your browser, open: {CYAN}https://android.googlesource.com/new-password{NC}")
+    print(f"  2. Sign in with any Google account and copy the generated authentication code.\n")
+
+    cookie_line = read_input("Paste the generated auth line or script [q=abort]: ").strip()
+    if not cookie_line or cookie_line.lower() in ("q", "quit", "exit"):
+        print("Cancelled.")
+        pause()
+        return
+
+    configure_gitcookies(vm, cookie_line)
+    pause()
+
+
 def run_tools_menu(vm: dict):
     """Setup & tools submenu loop."""
     while True:
@@ -226,7 +200,7 @@ def run_tools_menu(vm: dict):
         print(f" {BOLD}1){NC} Run Environment Setup (packages, repo, ccache)")
         print(f" {BOLD}2){NC} Upload SourceForge SSH Key (~/.ssh/crave_sf)")
         print(f" {BOLD}3){NC} Deploy 30m Auto-Idle Shutdown Watchdog")
-        print(f" {BOLD}4){NC} Configure Git Dummy Identity (avoid 429 rate limits)")
+        print(f" {BOLD}4){NC} Configure Google Source Auth (.gitcookies to bypass 429 rate limits)")
         print(f" {BOLD}5){NC} Change VM Timezone (IST or custom)")
         print(f" {BOLD}6){NC} Upload .env Credentials")
         print()
@@ -250,7 +224,7 @@ def run_tools_menu(vm: dict):
         elif choice == "3":
             submenu_watchdog(vm)
         elif choice == "4":
-            submenu_dummy_git(vm)
+            submenu_gitcookies(vm)
         elif choice == "5":
             submenu_timezone(vm)
         elif choice == "6":

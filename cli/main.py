@@ -11,6 +11,10 @@ import json
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from cli import base, services, builds, ops, storage, tools, cluster
 from cli.base import (
     clear_screen, print_divider, print_section, print_status,

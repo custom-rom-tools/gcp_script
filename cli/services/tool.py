@@ -134,6 +134,39 @@ def configure_dummy_git(vm: dict, name: str = "", email: str = "") -> bool:
     return True
 
 
+def configure_gitcookies(vm: dict, cookie_data: str) -> bool:
+    """Install Google Source authentication cookies (~/.gitcookies) to avoid 429 rate limits."""
+    if not is_vm_running(vm):
+        print(">>> Error: Target VM is offline.")
+        return False
+
+    cookie_data = cookie_data.strip()
+    if not cookie_data:
+        return False
+
+    setup_cmd = (
+        "touch ~/.gitcookies && chmod 0600 ~/.gitcookies && "
+        "git config --global http.cookiefile ~/.gitcookies"
+    )
+    res = vm_exec(vm, setup_cmd, check=False, timeout=30)
+    if res.returncode != 0:
+        print(">>> Error configuring git cookiefile setting.")
+        return False
+
+    if ">>" in cookie_data or "tee" in cookie_data:
+        res = vm_exec(vm, cookie_data, check=False, timeout=30)
+    else:
+        b64 = base64.b64encode(cookie_data.encode()).decode()
+        res = vm_exec(vm, f"printf '%s' '{b64}' | base64 -d >> ~/.gitcookies", check=False, timeout=30)
+
+    if res.returncode == 0:
+        print(f"\n>>> Google Source .gitcookies successfully configured on {vm['instance']}!")
+        return True
+    else:
+        print(f"\n>>> Failed to save .gitcookies: {res.stderr}")
+        return False
+
+
 def get_vm_timezone(vm: dict) -> tuple[str, str]:
     """Return the current VM timezone and local date string."""
     if not is_vm_running(vm):

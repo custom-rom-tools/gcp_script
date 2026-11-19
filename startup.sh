@@ -224,8 +224,8 @@ set -g status-left-length 30
 set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_label,#{@build_label},BUILD} #[bg=colour235,fg=colour39] "
 set -g window-status-style "bg=colour235,fg=colour245"
 set -g window-status-current-style "bg=colour238,fg=colour255,bold"
-set -g status-right-length 85
-set -g status-right "#(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
+set -g status-right-length 140
+set -g status-right "#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 EOF_TMUX
 fi
 systemctl restart idle-shutdown.service 2>/dev/null || true

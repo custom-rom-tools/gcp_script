@@ -77,8 +77,8 @@ set -g status-left-length 30
 set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_label,#{@build_label},BUILD} #[bg=colour235,fg=colour39] "
 set -g window-status-style "bg=colour235,fg=colour245"
 set -g window-status-current-style "bg=colour238,fg=colour255,bold"
-set -g status-right-length 85
-set -g status-right "#(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
+set -g status-right-length 140
+set -g status-right "#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 """
 
 
@@ -115,8 +115,8 @@ tmux set-option -g status-left-length 30 2>/dev/null || true
 tmux set-option -g status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour235,fg=colour39] ' 2>/dev/null || true
 tmux set-window-option -g window-status-style 'bg=colour235,fg=colour245' 2>/dev/null || true
 tmux set-window-option -g window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
-tmux set-option -g status-right-length 85 2>/dev/null || true
-tmux set-option -g status-right '#(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
+tmux set-option -g status-right-length 140 2>/dev/null || true
+tmux set-option -g status-right '#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 tmux set-option -u -t rom-build mouse 2>/dev/null || true
 tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
 tmux set-option -t rom-build status-interval 2 2>/dev/null || true
@@ -125,8 +125,8 @@ tmux set-option -t rom-build status-left-length 30 2>/dev/null || true
 tmux set-option -t rom-build status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour235,fg=colour39] ' 2>/dev/null || true
 tmux set-window-option -t rom-build window-status-style 'bg=colour235,fg=colour245' 2>/dev/null || true
 tmux set-window-option -t rom-build window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
-tmux set-option -t rom-build status-right-length 85 2>/dev/null || true
-tmux set-option -t rom-build status-right '#(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
+tmux set-option -t rom-build status-right-length 140 2>/dev/null || true
+tmux set-option -t rom-build status-right '#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 """
 
 
