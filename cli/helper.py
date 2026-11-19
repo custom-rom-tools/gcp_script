@@ -174,6 +174,7 @@ def prompt_build_variant(default: str = "userdebug") -> str:
         print(f"  {GREEN}1){NC} eng        (Recommended)")
         print(f"  {CYAN}2){NC} userdebug  (Debug)")
         print(f"  {YELLOW}3){NC} user       (Release)")
+        print()
         print(f"  {RED}0 / q){NC} Cancel / Abort")
         mapping = {"1": "eng", "2": "userdebug", "3": "user"}
         prompt = " Select variant [1-3, 0/q, default: 1 (eng)]: "
@@ -181,6 +182,7 @@ def prompt_build_variant(default: str = "userdebug") -> str:
         print(f"  {GREEN}1){NC} userdebug  (Recommended)")
         print(f"  {CYAN}2){NC} user       (Official Release)")
         print(f"  {YELLOW}3){NC} eng        (Debug)")
+        print()
         print(f"  {RED}0 / q){NC} Cancel / Abort")
         mapping = {"1": "userdebug", "2": "user", "3": "eng"}
         prompt = " Select variant [1-3, 0/q, default: 1 (userdebug)]: "

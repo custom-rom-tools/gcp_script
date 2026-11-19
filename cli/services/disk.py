@@ -594,6 +594,7 @@ def _select_disk(vm: dict, disks: list[str], title: str, action: str) -> str:
     for idx, name in enumerate(disks, 1):
         size = get_disk_size(vm, name)
         print(f" {BOLD}{idx}){NC} {name} ({size or '?'} GB - {get_disk_role_label(name, vm)})")
+    print()
     print(f" {RED}0 / q){NC} Cancel / Abort")
     choice = read_input(f"Select disk number to {action} [1-{len(disks)} or 0/q, default: 1]: ").strip().lower()
     if not choice:

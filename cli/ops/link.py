@@ -31,6 +31,7 @@ def submenu_view_links(vm: dict):
         print_divider()
         print(f"  {YELLOW}r){NC} Reload / Refresh Links")
         print(f"  {RED}c){NC} Clear Links (local cache, VM log and metadata)")
+        print()
         print(f"  {RED}0 / q){NC} Back to Main Menu / Quit (or Enter)")
         print_divider()
 
