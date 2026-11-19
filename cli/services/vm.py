@@ -1,101 +1,139 @@
 """
 VM Backend Service (cli/services/vm.py)
-Handles Google Cloud Compute Engine instance lifecycle, discovery,
-authentication, SSH execution, and persistence.
+Google Cloud Compute lifecycle, discovery, authentication, persistence and a
+low-latency SSH/SCP layer with connection multiplexing.
+
+The interactive menu must feel instant: every routine that runs on the VM uses
+an SSH ControlMaster connection, and GCP API results are cached for a few
+seconds.  ``gcloud compute ssh`` is only a fallback for the first connection or
+when the local Google key is missing.
 """
 
-import os
-import sys
+from __future__ import annotations
+
+import getpass
 import json
-import time
-import shutil
+import os
+import re
+import socket
 import subprocess
+import tempfile
+import time
 from pathlib import Path
-from cli.base import read_input
+from typing import Iterable
 
+from cli.base import restore_local_terminal
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ACTIVE_VM_FILE = Path.home() / ".gcp_active_vm"
-_VM_INFO_CACHE = {}
-_VM_INFO_CACHE_TIME = {}
+SSH_KEY = Path.home() / ".ssh" / "google_compute_engine"
+SSH_SOCK = "/tmp/gcp_rom_ssh_%h_%p_%r"
+CACHE_DIR = Path(tempfile.gettempdir())
+
+MACHINE_TYPES = ["c2d-standard-16", "t2d-standard-16", "c2-standard-16"]
+DEFAULT_MACHINE_TYPE = "c2d-standard-16"
+DEFAULT_ZONE = "us-central1-a"
+DEFAULT_GENERAL_DISK = "gcp-general-disk"
+
+_VM_INFO_CACHE: dict[str, tuple[float, dict | None]] = {}
 _AUTH_CACHE = {"value": None, "checked": 0.0}
-_DISCOVER_CACHE = {}
-_DISCOVER_CACHE_TIME = {}
+_DISCOVER_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_PROJECT_CACHE = {"value": "", "checked": 0.0}
 
 
-def load_local_env():
+# ---------------------------------------------------------------------------
+# Environment / local configuration
+# ---------------------------------------------------------------------------
+def load_local_env() -> None:
     """Load local .env or ~/.build_env into os.environ if present."""
     candidates = [
         Path.cwd() / ".env",
-        Path(__file__).resolve().parent.parent.parent / ".env",
+        REPO_ROOT / ".env",
         Path.home() / ".build_env",
     ]
-    for p in candidates:
-        if p.is_file():
-            try:
-                for line in p.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        k, v = line.split("=", 1)
-                        k = k.strip()
-                        v = v.strip().strip("'\"")
-                        if k not in os.environ and v:
-                            os.environ[k] = v
-            except Exception:
-                pass
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip("'\"")
+                if key and value and key not in os.environ:
+                    os.environ[key] = value
+        except OSError:
+            pass
 
 
-def run_gcloud(args: list, check: bool = True) -> subprocess.CompletedProcess:
-    """Run a gcloud command returning CompletedProcess."""
-    cmd = ["gcloud"] + args
-    return subprocess.run(cmd, capture_output=True, text=True, check=check)
+def load_vm_preset() -> dict:
+    try:
+        return json.loads((REPO_ROOT / "configs" / "vm_preset.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# gcloud helpers
+# ---------------------------------------------------------------------------
+def run_gcloud(args: list[str], check: bool = True, timeout: int | None = None) -> subprocess.CompletedProcess:
+    """Run a gcloud command and return its CompletedProcess."""
+    return subprocess.run(
+        ["gcloud"] + args,
+        capture_output=True,
+        text=True,
+        check=check,
+        timeout=timeout,
+    )
 
 
 def check_gcloud_auth() -> str | None:
-    """Return active Google Cloud account email, or None if unauthenticated."""
+    """Return the active Google Cloud account email, or None."""
     now = time.time()
-    if now - _AUTH_CACHE["checked"] < 30:
+    ttl = 30.0 if _AUTH_CACHE["value"] else 5.0
+    if now - _AUTH_CACHE["checked"] < ttl:
         return _AUTH_CACHE["value"]
     try:
-        res = run_gcloud(["auth", "list", "--format=json"], check=False)
-        if res.returncode == 0 and res.stdout.strip():
-            accounts = json.loads(res.stdout)
-            for acc in accounts:
-                if acc.get("status") == "ACTIVE":
-                    _AUTH_CACHE["value"] = acc.get("account")
-                    _AUTH_CACHE["checked"] = now
-                    return _AUTH_CACHE["value"]
-            if accounts and accounts[0].get("account"):
-                _AUTH_CACHE["value"] = accounts[0].get("account")
-                _AUTH_CACHE["checked"] = now
-                return _AUTH_CACHE["value"]
+        res = run_gcloud(["auth", "list", "--format=json"], check=False, timeout=30)
+        accounts = json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else []
+        active = next((a.get("account") for a in accounts if a.get("status") == "ACTIVE"), None)
+        if not active and accounts:
+            active = accounts[0].get("account")
+        _AUTH_CACHE["value"] = active
     except Exception:
-        pass
-    _AUTH_CACHE["value"] = None
+        _AUTH_CACHE["value"] = None
     _AUTH_CACHE["checked"] = now
-    return None
+    return _AUTH_CACHE["value"]
 
 
 def login_gcloud() -> bool:
-    """Prompt interactive Google Cloud login."""
+    """Launch interactive ``gcloud auth login``."""
     print("\n>>> Launching Google Cloud authentication (gcloud auth login)...")
-    res = subprocess.run(["gcloud", "auth", "login"])
+    try:
+        res = subprocess.run(["gcloud", "auth", "login"])
+    except FileNotFoundError:
+        print(">>> Error: gcloud is not installed or not on PATH.")
+        return False
+    _AUTH_CACHE["checked"] = 0.0
+    _PROJECT_CACHE["checked"] = 0.0
     if res.returncode == 0:
-        _AUTH_CACHE["checked"] = 0.0
         account = check_gcloud_auth()
-        print(f"\n>>> Successfully authenticated as: {account}")
+        print(f"\n>>> Successfully authenticated as: {account or 'unknown'}")
         return True
     print("\n>>> Error: Authentication failed or was cancelled.")
     return False
 
 
 def ensure_gcloud_authenticated() -> bool:
-    """Verify active gcloud authentication, prompting login if needed."""
-    account = check_gcloud_auth()
-    if account:
+    if check_gcloud_auth():
         return True
-
     print("\n" + "=" * 65)
     print(" ⚠️  No active Google Cloud account detected.")
     print("=" * 65)
+    from cli.base import read_input
+
     choice = read_input("Sign in to Google Cloud now? Y/n: ").strip().lower()
     if choice not in ("n", "no"):
         return login_gcloud()
@@ -103,320 +141,785 @@ def ensure_gcloud_authenticated() -> bool:
 
 
 def get_default_project() -> str:
-    """Resolve active GCP project ID from .env or gcloud config."""
+    """Resolve the active GCP project ID from .env or gcloud config."""
     load_local_env()
-    proj = os.environ.get("GCP_PROJECT", "").strip()
-    if proj:
-        return proj
-
+    project = os.environ.get("GCP_PROJECT", "").strip()
+    if project:
+        return project
+    now = time.time()
+    if now - _PROJECT_CACHE["checked"] < 30:
+        return _PROJECT_CACHE["value"]
     try:
-        res = run_gcloud(["config", "get-value", "project"], check=False)
-        val = res.stdout.strip()
-        if val and "(unset)" not in val:
-            return val
+        res = run_gcloud(["config", "get-value", "project"], check=False, timeout=15)
+        value = res.stdout.strip()
+        if value and "(unset)" not in value:
+            _PROJECT_CACHE["value"] = value
     except Exception:
         pass
-    return ""
+    _PROJECT_CACHE["checked"] = now
+    return _PROJECT_CACHE["value"]
 
 
+def _gcloud_scope(vm: dict) -> list[str]:
+    args: list[str] = []
+    if vm.get("project"):
+        args.append(f"--project={vm['project']}")
+    return args
+
+
+# ---------------------------------------------------------------------------
+# Per-VM cache files
+# ---------------------------------------------------------------------------
+def _vm_key(vm: dict) -> str:
+    raw = f"{vm.get('project', '')}:{vm.get('zone', '')}:{vm.get('instance', '')}"
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", raw)
+
+
+def _ip_cache_path(vm: dict) -> Path:
+    return CACHE_DIR / f"gcp_rom_vm_ip_{_vm_key(vm)}"
+
+
+def _state_cache_path(vm: dict) -> Path:
+    return CACHE_DIR / f"gcp_rom_vm_state_{_vm_key(vm)}"
+
+
+def _read_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return default
+
+
+def _write_json(path: Path, data) -> None:
+    try:
+        path.write_text(json.dumps(data), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def invalidate_vm_cache(vm: dict) -> None:
+    key = f"{vm.get('project', '')}:{vm.get('zone', '')}:{vm.get('instance', '')}"
+    _VM_INFO_CACHE.pop(key, None)
+    for path in (_ip_cache_path(vm), _state_cache_path(vm)):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Discovery / active VM
+# ---------------------------------------------------------------------------
 def discover_instances(project: str = "", refresh: bool = False) -> list[dict]:
-    """Dynamically list all compute instances across all zones for the project."""
+    """List all compute instances across zones (cached for 10 seconds)."""
     target_project = project or get_default_project()
     now = time.time()
-    if not refresh and now - _DISCOVER_CACHE_TIME.get(target_project, 0) < 10:
-        return _DISCOVER_CACHE.get(target_project, [])
+    cached = _DISCOVER_CACHE.get(target_project)
+    if not refresh and cached and now - cached[0] < 10:
+        return cached[1]
+
     args = [
         "compute", "instances", "list",
-        "--format=json(name,zone.basename(),status,machineType.basename(),networkInterfaces[0].accessConfigs[0].natIP,disks[].source.basename())"
+        "--format=json(name,zone.basename(),status,machineType.basename(),"
+        "networkInterfaces[0].accessConfigs[0].natIP,disks[].source.basename())",
     ]
     if target_project:
         args.append(f"--project={target_project}")
-
     try:
-        res = run_gcloud(args, check=False)
-        if res.returncode == 0 and res.stdout.strip():
-            raw_vms = json.loads(res.stdout)
-            discovered = []
-            for v in raw_vms:
-                name = v.get("name", "")
-                zone = v.get("zone", "")
-                status = v.get("status", "")
-                mt = v.get("machineType", "")
-                ip = "None"
-                net_ifs = v.get("networkInterfaces", [])
-                if net_ifs:
-                    access = net_ifs[0].get("accessConfigs", [])
-                    if access:
-                        ip = access[0].get("natIP", "None")
-
-                disks = []
-                for d in v.get("disks", []):
-                    if isinstance(d, dict):
-                        src = d.get("source", "")
-                    else:
-                        src = str(d)
-                    if src:
-                        disks.append(src.split("/")[-1])
-
-                gen_disk = next((d for d in disks if "general" in d.lower()), "gcp-general-disk")
-
-                discovered.append({
-                    "name": name,
-                    "zone": zone,
-                    "status": status,
-                    "machine_type": mt,
-                    "ip": ip,
-                    "disks": disks,
-                    "general_disk": gen_disk,
-                    "project": target_project
-                })
-            _DISCOVER_CACHE[target_project] = discovered
-            _DISCOVER_CACHE_TIME[target_project] = now
-            return discovered
+        res = run_gcloud(args, check=False, timeout=90)
+        raw = json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else []
     except Exception:
-        pass
-    return []
+        return cached[1] if cached else []
+
+    discovered: list[dict] = []
+    for item in raw:
+        name = item.get("name", "")
+        zone = item.get("zone", "")
+        if "/" in zone:
+            zone = zone.rstrip("/").split("/")[-1]
+        status = item.get("status", "")
+        machine_type = item.get("machineType", "")
+        if "/" in machine_type:
+            machine_type = machine_type.rstrip("/").split("/")[-1]
+        ip = "None"
+        for iface in item.get("networkInterfaces", []) or []:
+            for access in iface.get("accessConfigs", []) or []:
+                if access.get("natIP"):
+                    ip = access["natIP"]
+                    break
+            if ip != "None":
+                break
+        disks: list[str] = []
+        for disk in item.get("disks", []) or []:
+            src = disk.get("source", "") if isinstance(disk, dict) else str(disk)
+            if src:
+                disks.append(src.rstrip("/").split("/")[-1])
+        general = next((d for d in disks if "general" in d.lower()), DEFAULT_GENERAL_DISK)
+        discovered.append({
+            "name": name,
+            "instance": name,
+            "zone": zone,
+            "status": status,
+            "machine_type": machine_type,
+            "ip": ip,
+            "disks": disks,
+            "general_disk": general,
+            "project": target_project,
+        })
+
+    _DISCOVER_CACHE[target_project] = (now, discovered)
+    return discovered
 
 
 def get_active_vm() -> dict:
-    """Resolve active target VM from .env, ~/.gcp_active_vm, or dynamic discovery."""
+    """Resolve the active target VM from env, ~/.gcp_active_vm or discovery."""
     load_local_env()
     project = get_default_project()
 
-    env_inst = os.environ.get("GCP_INSTANCE", "").strip()
+    env_instance = os.environ.get("GCP_INSTANCE", "").strip()
     env_zone = os.environ.get("GCP_ZONE", "").strip()
     env_disk = os.environ.get("GCP_GENERAL_DISK", "").strip()
-
-    if env_inst and env_zone:
+    env_machine = os.environ.get("GCP_MACHINE_TYPE", "").strip()
+    if env_instance and env_zone:
         return {
-            "instance": env_inst,
+            "instance": env_instance,
             "zone": env_zone,
             "project": project,
-            "general_disk": env_disk or "gcp-general-disk"
+            "general_disk": env_disk or DEFAULT_GENERAL_DISK,
+            "machine_type": env_machine,
         }
 
-    saved_data = {}
+    saved: dict[str, str] = {}
     if ACTIVE_VM_FILE.is_file():
         try:
-            content = ACTIVE_VM_FILE.read_text(encoding="utf-8").strip()
-            for line in content.splitlines():
+            for line in ACTIVE_VM_FILE.read_text(encoding="utf-8").splitlines():
                 if "=" in line:
-                    k, v = line.split("=", 1)
-                    k = k.strip().lower()
-                    v = v.strip().strip("'\"")
-                    if k in ("instance", "zone", "project", "general_disk") and v:
-                        saved_data[k] = v
-        except Exception:
+                    key, value = line.split("=", 1)
+                    key = key.strip().lower()
+                    value = value.strip().strip("'\"")
+                    if key in ("instance", "zone", "project", "general_disk", "machine_type") and value:
+                        saved[key] = value
+        except OSError:
             pass
 
-    if saved_data.get("instance") and saved_data.get("zone"):
+    if saved.get("instance") and saved.get("zone"):
         return {
-            "instance": saved_data["instance"],
-            "zone": saved_data["zone"],
-            "project": saved_data.get("project") or project,
-            "general_disk": saved_data.get("general_disk") or "gcp-general-disk"
+            "instance": saved["instance"],
+            "zone": saved["zone"],
+            "project": saved.get("project") or project,
+            "general_disk": saved.get("general_disk") or DEFAULT_GENERAL_DISK,
+            "machine_type": saved.get("machine_type", ""),
         }
 
     instances = discover_instances(project)
     if instances:
-        running_vms = [v for v in instances if v["status"] == "RUNNING"]
-        chosen = running_vms[0] if running_vms else instances[0]
-        save_active_vm(
-            instance=chosen["name"],
-            zone=chosen["zone"],
-            project=chosen["project"],
-            general_disk=chosen["general_disk"]
-        )
+        chosen = next((v for v in instances if v["status"] == "RUNNING"), instances[0])
+        save_active_vm(chosen["name"], chosen["zone"], chosen["project"], chosen["general_disk"],
+                       chosen.get("machine_type", ""))
         return {
             "instance": chosen["name"],
             "zone": chosen["zone"],
             "project": chosen["project"],
-            "general_disk": chosen["general_disk"]
+            "general_disk": chosen["general_disk"],
+            "machine_type": chosen.get("machine_type", ""),
         }
 
     return {
         "instance": "rom-build-farm",
-        "zone": "us-central1-a",
+        "zone": DEFAULT_ZONE,
         "project": project,
-        "general_disk": "gcp-general-disk"
+        "general_disk": DEFAULT_GENERAL_DISK,
+        "machine_type": DEFAULT_MACHINE_TYPE,
     }
 
 
-def save_active_vm(instance: str, zone: str, project: str, general_disk: str = "gcp-general-disk"):
-    """Persist active target VM to ~/.gcp_active_vm."""
-    content = f"INSTANCE='{instance}'\nZONE='{zone}'\nPROJECT='{project}'\nGENERAL_DISK='{general_disk}'\n"
-    ACTIVE_VM_FILE.write_text(content, encoding="utf-8")
+def save_active_vm(instance: str, zone: str, project: str,
+                   general_disk: str = DEFAULT_GENERAL_DISK,
+                   machine_type: str = "") -> None:
+    """Persist the active target VM to ~/.gcp_active_vm."""
+    lines = [
+        f"INSTANCE='{instance}'",
+        f"ZONE='{zone}'",
+        f"PROJECT='{project}'",
+        f"GENERAL_DISK='{general_disk}'",
+    ]
+    if machine_type:
+        lines.append(f"MACHINE_TYPE='{machine_type}'")
+    try:
+        ACTIVE_VM_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f">>> Warning: could not save active VM: {exc}")
 
 
-def get_vm_info(vm: dict) -> dict | None:
-    """Fetch JSON description of the active instance."""
-    key = f"{vm.get('project','')}:{vm['zone']}:{vm['instance']}"
+# ---------------------------------------------------------------------------
+# VM state / info
+# ---------------------------------------------------------------------------
+def check_ssh_port(ip: str, timeout: float = 1.0) -> bool:
+    if not ip:
+        return False
+    try:
+        with socket.create_connection((ip, 22), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def get_vm_state(vm: dict) -> tuple[str, str]:
+    """Return ``(status, external_ip)`` using a 4-second cache."""
     now = time.time()
-    if now - _VM_INFO_CACHE_TIME.get(key, 0) < 5:
-        return _VM_INFO_CACHE.get(key)
+    state_path = _state_cache_path(vm)
+    cached = _read_json(state_path, None)
+    if cached and now - float(cached.get("ts", 0)) < 4:
+        return str(cached.get("status", "UNKNOWN")), str(cached.get("ip", ""))
+
+    ip_path = _ip_cache_path(vm)
+    try:
+        cached_ip = ip_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        cached_ip = ""
+    if cached_ip and check_ssh_port(cached_ip):
+        _write_json(state_path, {"status": "RUNNING", "ip": cached_ip, "ts": now})
+        return "RUNNING", cached_ip
+
     args = [
         "compute", "instances", "describe", vm["instance"],
         f"--zone={vm['zone']}",
-        "--format=json"
-    ]
-    if vm.get("project"):
-        args.append(f"--project={vm['project']}")
+        "--format=csv[no-heading](status,networkInterfaces[0].accessConfigs[0].natIP)",
+    ] + _gcloud_scope(vm)
+    status, ip = "UNKNOWN", ""
     try:
-        res = run_gcloud(args, check=False)
-        if res.returncode == 0 and res.stdout:
-            info = json.loads(res.stdout)
-            _VM_INFO_CACHE[key] = info
-            _VM_INFO_CACHE_TIME[key] = now
-            return info
+        res = run_gcloud(args, check=False, timeout=30)
+        if res.returncode == 0 and res.stdout.strip():
+            first = res.stdout.strip().splitlines()[0]
+            parts = [p.strip() for p in first.split(",")]
+            status = parts[0] or "UNKNOWN"
+            ip = parts[1] if len(parts) > 1 else ""
     except Exception:
         pass
-    _VM_INFO_CACHE[key] = None
-    _VM_INFO_CACHE_TIME[key] = now
-    return None
+
+    if status == "RUNNING" and ip:
+        try:
+            ip_path.write_text(ip, encoding="utf-8")
+        except OSError:
+            pass
+    else:
+        try:
+            ip_path.unlink()
+        except OSError:
+            pass
+    _write_json(state_path, {"status": status, "ip": ip, "ts": now})
+    return status, ip
 
 
 def is_vm_running(vm: dict) -> bool:
-    """Check if the target instance is online and running."""
-    info = get_vm_info(vm)
-    return bool(info and info.get("status") == "RUNNING")
+    return get_vm_state(vm)[0] == "RUNNING"
 
 
-def get_vm_external_ip(vm: dict) -> str:
-    """Fetch external NAT IP of the instance."""
-    info = get_vm_info(vm)
-    if info:
-        for iface in info.get("networkInterfaces", []):
-            for access in iface.get("accessConfigs", []):
-                ip = access.get("natIP")
-                if ip:
-                    return ip
+def get_vm_ip(vm: dict) -> str:
+    status, ip = get_vm_state(vm)
+    if status == "RUNNING" and ip:
+        return ip
+    try:
+        cached_ip = _ip_cache_path(vm).read_text(encoding="utf-8").strip()
+    except OSError:
+        cached_ip = ""
+    if cached_ip and check_ssh_port(cached_ip):
+        return cached_ip
     return ""
 
 
-def vm_exec(vm: dict, cmd_str: str, check: bool = True) -> subprocess.CompletedProcess:
-    """Run non-interactive remote command via gcloud compute ssh."""
+def get_vm_info(vm: dict, refresh: bool = False) -> dict | None:
+    """Fetch the JSON description of an instance (cached for 5 seconds)."""
+    key = f"{vm.get('project', '')}:{vm.get('zone', '')}:{vm.get('instance', '')}"
+    now = time.time()
+    cached = _VM_INFO_CACHE.get(key)
+    if not refresh and cached and now - cached[0] < 5:
+        return cached[1]
     args = [
-        "compute", "ssh", vm["instance"],
+        "compute", "instances", "describe", vm["instance"],
         f"--zone={vm['zone']}",
-        "--command", cmd_str
+        "--format=json",
+    ] + _gcloud_scope(vm)
+    info = None
+    try:
+        res = run_gcloud(args, check=False, timeout=45)
+        if res.returncode == 0 and res.stdout:
+            info = json.loads(res.stdout)
+    except Exception:
+        info = None
+    _VM_INFO_CACHE[key] = (now, info)
+    return info
+
+
+def get_attached_disk_names(vm: dict) -> list[str]:
+    info = get_vm_info(vm)
+    if not info:
+        return []
+    names: list[str] = []
+    for disk in info.get("disks", []) or []:
+        src = disk.get("source", "")
+        if src:
+            names.append(src.rstrip("/").split("/")[-1])
+    return names
+
+
+def get_instance_machine_type(vm: dict) -> str:
+    info = get_vm_info(vm)
+    if info:
+        return (info.get("machineType", "") or "").rstrip("/").split("/")[-1]
+    return "UNKNOWN"
+
+
+# ---------------------------------------------------------------------------
+# SSH / SCP
+# ---------------------------------------------------------------------------
+def _ssh_identity_available() -> bool:
+    return SSH_KEY.is_file()
+
+
+def _ssh_user() -> str:
+    return os.environ.get("USER") or getpass.getuser()
+
+
+def _ssh_opts(batch_mode: bool = True) -> list[str]:
+    opts = [
+        "-o", "ControlMaster=auto",
+        "-o", f"ControlPath={SSH_SOCK}",
+        "-o", "ControlPersist=15m",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=ERROR",
+        "-o", "ConnectTimeout=3",
+        "-i", str(SSH_KEY),
     ]
-    if vm.get("project"):
-        args.append(f"--project={vm['project']}")
-    return run_gcloud(args, check=check)
+    if batch_mode:
+        opts += ["-o", "BatchMode=yes"]
+    return opts
+
+
+def vm_exec(vm: dict, cmd_str: str, check: bool = True,
+            timeout: int | None = None) -> subprocess.CompletedProcess:
+    """Run a non-interactive command on the VM."""
+    ip = get_vm_ip(vm)
+    if ip and _ssh_identity_available():
+        cmd = ["ssh", *_ssh_opts(), f"{_ssh_user()}@{ip}", cmd_str]
+    else:
+        cmd = [
+            "gcloud", "compute", "ssh", vm["instance"],
+            f"--zone={vm['zone']}",
+            f"--command={cmd_str}",
+        ] + _gcloud_scope(vm)
+    return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=timeout)
 
 
 def vm_exec_tty(vm: dict, cmd_str: str = "bash -l") -> int:
-    """Attach interactive PTY SSH terminal to the remote instance."""
-    args = [
-        "gcloud", "compute", "ssh", vm["instance"],
-        f"--zone={vm['zone']}",
-        "--", "-t", cmd_str
-    ]
-    if vm.get("project"):
-        args.insert(4, f"--project={vm['project']}")
-    res = subprocess.run(args)
-    return res.returncode
+    """Run an interactive PTY command on the VM and restore the local terminal."""
+    ip = get_vm_ip(vm)
+    try:
+        if ip and _ssh_identity_available():
+            cmd = ["ssh", "-t", *_ssh_opts(batch_mode=False), f"{_ssh_user()}@{ip}", cmd_str]
+        else:
+            cmd = [
+                "gcloud", "compute", "ssh", vm["instance"],
+                f"--zone={vm['zone']}",
+            ] + _gcloud_scope(vm) + ["--", "-t", cmd_str]
+        res = subprocess.run(cmd)
+        return res.returncode
+    finally:
+        restore_local_terminal()
 
 
-def start_vm(vm: dict) -> bool:
-    """Power on instance."""
-    print(f"\n>>> Starting VM: {vm['instance']} ({vm['zone']})...")
-    args = ["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"]
-    if vm.get("project"):
-        args.append(f"--project={vm['project']}")
-    res = run_gcloud(args, check=False)
-    if res.returncode == 0:
-        key = f"{vm.get('project','')}:{vm['zone']}:{vm['instance']}"
-        _VM_INFO_CACHE.pop(key, None)
-        _VM_INFO_CACHE_TIME.pop(key, None)
-        print(">>> VM started successfully.")
-        return True
-    print(f">>> Error: Failed to start VM: {res.stderr}")
+def vm_push(vm: dict, local_paths: Iterable[str | Path], remote_dir: str,
+            recursive: bool = False) -> subprocess.CompletedProcess:
+    """Copy local file(s) to the VM."""
+    paths = [str(p) for p in local_paths]
+    ip = get_vm_ip(vm)
+    if ip and _ssh_identity_available():
+        cmd = ["scp", *([] if not recursive else ["-r"]), *_ssh_opts(),
+               *paths, f"{_ssh_user()}@{ip}:{remote_dir}"]
+    else:
+        cmd = ["gcloud", "compute", "scp"]
+        if recursive:
+            cmd.append("--recurse")
+        cmd += paths + [f"{vm['instance']}:{remote_dir}"] + _gcloud_scope(vm) + [f"--zone={vm['zone']}"]
+    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+
+def vm_pull(vm: dict, remote_paths: Iterable[str], local_dir: str,
+            recursive: bool = False) -> subprocess.CompletedProcess:
+    """Copy remote file(s) (globs allowed) to a local directory."""
+    paths = list(remote_paths)
+    ip = get_vm_ip(vm)
+    if ip and _ssh_identity_available():
+        sources = [f"{_ssh_user()}@{ip}:{p}" for p in paths]
+        cmd = ["scp", *([] if not recursive else ["-r"]), *_ssh_opts(), *sources, local_dir]
+    else:
+        sources = [f"{vm['instance']}:{p}" for p in paths]
+        cmd = ["gcloud", "compute", "scp"]
+        if recursive:
+            cmd.append("--recurse")
+        cmd += sources + [local_dir, f"--zone={vm['zone']}"] + _gcloud_scope(vm)
+    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+
+def vm_scp(vm: dict, src: str | Path, dst: str, recursive: bool = False) -> subprocess.CompletedProcess:
+    """Compatibility wrapper: copy one local path to a remote destination."""
+    return vm_push(vm, [src], dst, recursive=recursive)
+
+
+# ---------------------------------------------------------------------------
+# SSH readiness
+# ---------------------------------------------------------------------------
+def diagnose_ssh_failure(vm: dict, elapsed: int) -> bool:
+    status, ip = get_vm_state(vm)
+    print("\n" + "=" * 65)
+    print(f">>> SSH did not become ready after {elapsed}s")
+    print(f"    Instance state : {status or 'UNKNOWN'}")
+    print(f"    Instance IP    : {ip or '(none)'}")
+    if status != "RUNNING":
+        print("    The VM is not RUNNING, so sshd cannot accept connections.")
+        print("=" * 65)
+        return False
+    if not ip:
+        print("    The VM has no external IP yet. Wait a few seconds and retry.")
+        print("=" * 65)
+        return False
+    if not check_ssh_port(ip):
+        print("    TCP port 22    : closed")
+        print("    sshd is not listening yet (still booting) or port 22 is blocked.")
+        print("    Inspect the boot log:")
+        print(f"      gcloud compute instances get-serial-port-output {vm['instance']} "
+              f"--zone={vm['zone']} --project={vm.get('project', '')} | tail -40")
+        print("=" * 65)
+        return False
+
+    probe = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6",
+         "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+         "-o", "LogLevel=ERROR", "-i", str(SSH_KEY), f"{_ssh_user()}@{ip}", "true"],
+        capture_output=True, text=True,
+    )
+    print(f"    TCP port 22    : open")
+    print(f"    SSH result     : {(probe.stderr or probe.stdout or 'unknown').strip()} (exit {probe.returncode})")
+    if "Permission denied" in (probe.stderr or ""):
+        print("    The guest rejected the SSH key.")
+        print("    Most common cause: the boot disk is full, so cloud-init cannot")
+        print("    write ~/.ssh/authorized_keys (the metadata script fails too).")
+    print("=" * 65)
     return False
 
 
-def stop_vm(vm: dict) -> bool:
-    """Power off instance to pause compute billing."""
-    print(f"\n>>> Stopping VM: {vm['instance']} ({vm['zone']})...")
-    args = ["compute", "instances", "stop", vm["instance"], f"--zone={vm['zone']}"]
-    if vm.get("project"):
-        args.append(f"--project={vm['project']}")
+def wait_for_ssh(vm: dict, timeout: int = 180) -> bool:
+    """Wait until the VM accepts SSH, reporting progress instead of hanging."""
+    print(f">>> Waiting for SSH service to become ready (up to {timeout}s)...")
+    invalidate_vm_cache(vm)
+    start = time.monotonic()
+    while True:
+        elapsed = int(time.monotonic() - start)
+        status, ip = get_vm_state(vm)
+        if status == "RUNNING" and ip:
+            try:
+                probe = vm_exec(vm, "true", check=False, timeout=8)
+                if probe.returncode == 0:
+                    print(f"\n>>> SSH connection established ({elapsed}s).")
+                    _post_ssh_health_check(vm)
+                    return True
+            except subprocess.TimeoutExpired:
+                pass
+        if elapsed >= timeout:
+            print()
+            return diagnose_ssh_failure(vm, timeout)
+        port_state = "open" if ip and check_ssh_port(ip) else "waiting"
+        print(f"\r    ... {elapsed:3d}s  VM:{status or 'UNKNOWN':<10}  SSH:{port_state}", end="", flush=True)
+        time.sleep(2)
+
+
+def _post_ssh_health_check(vm: dict) -> None:
+    """Best-effort watchdog enable and boot-disk space warning."""
+    try:
+        vm_exec(
+            vm,
+            "sudo systemctl is-active --quiet idle-shutdown.service || "
+            "(sudo systemctl daemon-reload && sudo systemctl enable --now idle-shutdown.service "
+            "&& sudo systemctl restart idle-shutdown.service) 2>/dev/null || true",
+            check=False,
+            timeout=20,
+        )
+        res = vm_exec(vm, "df -Pm / | awk 'NR==2{print $4}'", check=False, timeout=10)
+        digits = re.sub(r"[^0-9]", "", res.stdout or "")
+        if digits and int(digits) < 4096:
+            print(f">>> WARNING: only {digits}MB free on the VM boot disk.")
+            print("    Run 'ccache -C' or grow the boot disk before building.")
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Power lifecycle
+# ---------------------------------------------------------------------------
+def start_vm_with_failover(vm: dict) -> bool:
+    """Power on the VM, cascading through machine types when capacity is exhausted."""
+    if is_vm_running(vm):
+        return True
+
+    info = get_vm_info(vm, refresh=True)
+    status = (info or {}).get("status", "UNKNOWN")
+    current_mt = ((info or {}).get("machineType", "") or "").rstrip("/").split("/")[-1]
+    if status == "RUNNING":
+        print(f">>> VM {vm['instance']} is already RUNNING in {vm['zone']}.")
+        return True
+    current_mt = current_mt or DEFAULT_MACHINE_TYPE
+
+    print(f">>> VM {vm['instance']} is currently {status} ({current_mt}). Powering on...")
+    args = ["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"] + _gcloud_scope(vm)
     res = run_gcloud(args, check=False)
     if res.returncode == 0:
-        key = f"{vm.get('project','')}:{vm['zone']}:{vm['instance']}"
-        _VM_INFO_CACHE.pop(key, None)
-        _VM_INFO_CACHE_TIME.pop(key, None)
-        print(">>> VM stopped successfully. Compute billing paused.")
+        print(f">>> VM {vm['instance']} started successfully with {current_mt}!")
+        invalidate_vm_cache(vm)
+        return wait_for_ssh(vm)
+
+    err = f"{res.stdout}\n{res.stderr}"
+    print(f">>> Start failed with {current_mt}:\n{err.strip()}\n")
+    exhausted = any(token in err for token in (
+        "RESOURCE_POOL_EXHAUSTED", "ZONE_RESOURCE_POOL_EXHAUSTED",
+        "not have enough resources", "does not have enough resources",
+    ))
+    if exhausted:
+        print(f">>> Capacity exhausted for {current_mt} in {vm['zone']}.")
+        print(">>> Cascading through 16-core machine types (c2d -> t2d -> c2)...")
+        for machine_type in MACHINE_TYPES:
+            if machine_type == current_mt:
+                continue
+            print(f"\n>>> Switching in-place to candidate: {machine_type}...")
+            run_gcloud(
+                ["compute", "instances", "set-machine-type", vm["instance"],
+                 f"--machine-type={machine_type}", f"--zone={vm['zone']}"] + _gcloud_scope(vm) + ["--quiet"],
+                check=False,
+            )
+            print(f">>> Attempting to power on with {machine_type}...")
+            retry = run_gcloud(
+                ["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"]
+                + _gcloud_scope(vm),
+                check=False,
+            )
+            if retry.returncode == 0:
+                print(f">>> Resources acquired! VM {vm['instance']} is RUNNING with {machine_type}!")
+                invalidate_vm_cache(vm)
+                return wait_for_ssh(vm)
+            print(f">>> {machine_type} also out of capacity in {vm['zone']}.")
+        print(f">>> All 16-vCPU 64GB machine types are temporarily exhausted in {vm['zone']}.")
+        return False
+
+    print(">>> Retrying start once...")
+    run_gcloud(["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"]
+               + _gcloud_scope(vm), check=False)
+    invalidate_vm_cache(vm)
+    return wait_for_ssh(vm)
+
+
+def ensure_vm_online(vm: dict) -> bool:
+    if is_vm_running(vm):
         return True
-    print(f">>> Error: Failed to stop VM: {res.stderr}")
+    return start_vm_with_failover(vm)
+
+
+def ensure_running(vm: dict, target_disk: str, mount_point: str) -> bool:
+    """Make sure the VM is online and the requested build disk is mounted."""
+    from cli.services.disk import (
+        get_disk_meta, get_attached_device_name, ensure_disk_attached,
+        mount_disk_on_vm,
+    )
+
+    meta = get_disk_meta(target_disk)
+    if is_vm_running(vm):
+        actual_dev = get_attached_device_name(vm, target_disk, meta["device_name"])
+        check_cmd = (
+            f"DEV=''\n"
+            f"for c in '/dev/disk/by-id/google-{actual_dev}' "
+            f"'/dev/disk/by-id/google-{meta['device_name']}' "
+            f"'/dev/disk/by-id/google-{target_disk}'; do\n"
+            f"  if [ -b \"$c\" ]; then DEV=\"$c\"; break; fi\n"
+            f"done\n"
+            f"[ -z \"$DEV\" ] && echo 'NO_DEV' && exit 0\n"
+            f"REAL_DEV=$(readlink -f \"$DEV\")\n"
+            f"CUR_MPS=$(findmnt -rn -S \"$REAL_DEV\" -o TARGET 2>/dev/null || true)\n"
+            f"if [ \"$CUR_MPS\" = '{mount_point}' ]; then echo 'MOUNTED_EXACT'; "
+            f"else echo 'NEEDS_REMOUNT'; fi"
+        )
+        try:
+            res = vm_exec(vm, check_cmd, check=False, timeout=30)
+            state = (res.stdout or "").strip()
+        except subprocess.TimeoutExpired:
+            state = "NEED_FULL"
+        if state == "MOUNTED_EXACT":
+            return True
+        if state == "NEEDS_REMOUNT":
+            print(f">>> Mounting {target_disk} at {mount_point} (unmounting previous mount if any)...")
+            return mount_disk_on_vm(vm, target_disk, mount_point)
+
+    print(">>> Initializing VM and storage for build...")
+    if not ensure_disk_attached(vm, target_disk):
+        return False
+    if not start_vm_with_failover(vm):
+        return False
+    return mount_disk_on_vm(vm, target_disk, mount_point)
+
+
+def start_vm(vm: dict) -> bool:
+    """Interactive start flow used by the VM menu."""
+    print("=" * 60)
+    print("             GCP INSTANCE & DISK STARTUP")
+    print("=" * 60)
+    print(">>> Step 1/3: Checking GCP Instance State...")
+    status, ip = get_vm_state(vm)
+    if status == "RUNNING":
+        print(f" ✔ VM '{vm['instance']}' is already powered ON.")
+        if ip:
+            print(f"    External IP: {ip}")
+    else:
+        print(f">>> VM '{vm['instance']}' is currently powered down.")
+        if not start_vm_with_failover(vm):
+            print(f" ✖ Could not power on VM '{vm['instance']}' (no capacity in {vm['zone']}).")
+            return False
+        status, ip = get_vm_state(vm)
+
+    print("\n>>> Step 2/3: Inspecting Attached Secondary Disks...")
+    attached = get_attached_disk_names(vm)
+    secondary = [d for d in attached if d not in (vm["instance"], "gcp-boot-ccache-disk")]
+    if secondary:
+        print(f" ✔ Attached secondary disk(s): {', '.join(secondary)}")
+        print("    (Specific disks auto-mount at boot; general disk mounts at build time.)")
+    else:
+        print(" ℹ No secondary ROM disk currently attached (use Disk Manager or start a build).")
+
+    print("\n>>> Step 3/3: Verifying SSH access, boot mounts & RAM on VM...")
+    if not wait_for_ssh(vm):
+        ip = get_vm_ip(vm)
+        print("=" * 60)
+        print(f" ✖ VM '{vm['instance']}' is RUNNING but SSH is NOT ready!")
+        print(f"    External IP: {ip or 'unknown'} | Status: RUNNING | SSH: FAILED")
+        print("    sshd may still be booting, or the firewall/SSH key is not ready.")
+        print(f"    gcloud compute ssh {vm['instance']} --zone={vm['zone']}")
+        print("=" * 60)
+        return False
+
+    ip = get_vm_ip(vm)
+    res = vm_exec(vm, 'for d in /mnt/a16 /mnt/a17 /mnt/recovery; do mountpoint -q "$d" && echo "$d"; done',
+                  check=False, timeout=15)
+    mounts = [line.strip() for line in (res.stdout or "").splitlines() if line.strip()]
+    print("")
+    print("=" * 60)
+    print(f" ✅ VM '{vm['instance']}' is ONLINE and READY!")
+    print(f"    External IP: {ip} | Status: RUNNING | SSH: OK")
+    if mounts:
+        print(f"    Mounted build storage: {' '.join(mounts)}")
+    else:
+        print("    ℹ No build disk mounted yet.")
+        print("    It is mounted automatically when a build starts (Disk Manager / build menu).")
+    print("=" * 60)
+    print("")
+    res = vm_exec(vm, "df -h / /mnt/a16 /mnt/a17 /mnt/recovery 2>/dev/null; free -h",
+                  check=False, timeout=15)
+    if res.stdout:
+        print(res.stdout)
+    return True
+
+
+def stop_vm(vm: dict) -> bool:
+    """Stop the instance to pause compute billing."""
+    print("=" * 60)
+    print("                 STOPPING GCP INSTANCE")
+    print("=" * 60)
+    status, _ = get_vm_state(vm)
+    if status != "RUNNING":
+        print(f" ✔ VM '{vm['instance']}' is already STOPPED ({status}).")
+        print("    Compute billing is paused. No action needed.")
+        return True
+
+    print(f">>> Stopping VM '{vm['instance']}' to pause compute charges (~$0.726/hr)...")
+    res = run_gcloud(
+        ["compute", "instances", "stop", vm["instance"], f"--zone={vm['zone']}"] + _gcloud_scope(vm),
+        check=False,
+    )
+    invalidate_vm_cache(vm)
+    if res.returncode == 0:
+        print("=" * 60)
+        print(f" ✅ VM '{vm['instance']}' has been STOPPED successfully!")
+        print("    Compute billing has been PAUSED immediately.")
+        print("=" * 60)
+        return True
+    print(f" ✖ Failed to stop VM: {(res.stderr or res.stdout).strip()}")
     return False
 
 
 def set_machine_type(vm: dict, new_type: str) -> bool:
-    """Change instance machine type."""
+    """Change the instance machine type, preserving its power state."""
     print(f"\n>>> Switching {vm['instance']} to machine type: {new_type}...")
-    info = get_vm_info(vm)
-    current_type = ""
-    if info:
-        current_type = info.get("machineType", "").rstrip("/").split("/")[-1]
+    current_type = get_instance_machine_type(vm)
     if current_type == new_type:
         print(f">>> VM is already using {new_type}.")
         return True
     was_running = is_vm_running(vm)
     if was_running:
         print(">>> Stopping VM before changing machine type...")
-        if not stop_vm(vm):
+        res = run_gcloud(
+            ["compute", "instances", "stop", vm["instance"], f"--zone={vm['zone']}"] + _gcloud_scope(vm),
+            check=False,
+        )
+        if res.returncode != 0:
+            print(f">>> Error: failed to stop VM: {(res.stderr or res.stdout).strip()}")
             return False
+        invalidate_vm_cache(vm)
 
-    args = [
-        "compute", "instances", "set-machine-type", vm["instance"],
-        f"--machine-type={new_type}",
-        f"--zone={vm['zone']}"
-    ]
-    if vm.get("project"):
-        args.append(f"--project={vm['project']}")
-    res = run_gcloud(args, check=False)
-    if res.returncode == 0:
-        print(">>> Machine type updated.")
+    res = run_gcloud(
+        ["compute", "instances", "set-machine-type", vm["instance"],
+         f"--machine-type={new_type}", f"--zone={vm['zone']}"] + _gcloud_scope(vm) + ["--quiet"],
+        check=False,
+    )
+    if res.returncode != 0:
+        print(f">>> Error: Failed to set machine type: {(res.stderr or res.stdout).strip()}")
         if was_running:
-            print(">>> Restarting VM...")
-            if not start_vm(vm):
-                return False
-        _VM_INFO_CACHE.pop(f"{vm.get('project','')}:{vm['zone']}:{vm['instance']}", None)
-        _VM_INFO_CACHE_TIME.pop(f"{vm.get('project','')}:{vm['zone']}:{vm['instance']}", None)
-        return True
-    print(f">>> Error: Failed to set machine type: {res.stderr}")
-    return False
+            start_vm_with_failover(vm)
+        return False
+    print(">>> Machine type updated.")
+    invalidate_vm_cache(vm)
+    if was_running:
+        print(">>> Restarting VM...")
+        return start_vm_with_failover(vm)
+    return True
 
 
-def create_new_vm(name: str, zone: str, machine_type: str, data_disk: str = "", project: str = "") -> dict | None:
-    """Create a new compute instance with 30GB free standard boot disk and attached data disk."""
+# ---------------------------------------------------------------------------
+# VM creation / deletion
+# ---------------------------------------------------------------------------
+def create_new_vm(name: str, zone: str, machine_type: str, data_disk: str = "",
+                  project: str = "") -> dict | None:
+    """Create a VM with a 30GB standard boot disk and an optional data disk."""
     target_project = project or get_default_project()
 
-    # 1. Create data disk if specified and doesn't exist
     if data_disk:
         disk_args = ["compute", "disks", "describe", data_disk, f"--zone={zone}"]
         if target_project:
             disk_args.append(f"--project={target_project}")
-        res_d = run_gcloud(disk_args, check=False)
-        if res_d.returncode != 0:
+        existing = run_gcloud(disk_args, check=False)
+        if existing.returncode != 0:
             print(f"\n>>> Creating 500GB pd-balanced data disk '{data_disk}' in {zone}...")
-            c_args = [
+            create_args = [
                 "compute", "disks", "create", data_disk,
                 f"--zone={zone}",
                 "--size=500GB",
                 "--type=pd-balanced",
                 f"--description=Build storage disk for {name}",
-                "--quiet"
+                "--quiet",
             ]
             if target_project:
-                c_args.append(f"--project={target_project}")
-            created_disk = run_gcloud(c_args, check=False)
-            if created_disk.returncode != 0:
-                print(f"\n>>> [ERROR] Failed to create data disk '{data_disk}': {created_disk.stderr}")
+                create_args.append(f"--project={target_project}")
+            created = run_gcloud(create_args, check=False)
+            if created.returncode != 0:
+                print(f"\n>>> [ERROR] Failed to create data disk '{data_disk}': "
+                      f"{(created.stderr or created.stdout).strip()}")
                 return None
 
-    # 2. Create the VM instance
     print(f"\n>>> Creating VM '{name}' in {zone} with 30GB pd-standard boot disk...")
     create_args = [
         "compute", "instances", "create", name,
@@ -429,46 +932,49 @@ def create_new_vm(name: str, zone: str, machine_type: str, data_disk: str = "", 
         "--metadata=enable-oslogin=TRUE",
         "--scopes=cloud-platform",
         "--tags=rom-builder",
-        "--quiet"
+        "--quiet",
     ]
     if data_disk:
         create_args.extend(["--disk", f"name={data_disk},device-name=rom-general,mode=rw,boot=no"])
     if target_project:
         create_args.append(f"--project={target_project}")
 
-    res_vm = run_gcloud(create_args, check=False)
-    if res_vm.returncode != 0:
-        print(f"\n>>> Error: Failed to create VM: {res_vm.stderr}")
+    res = run_gcloud(create_args, check=False)
+    if res.returncode != 0:
+        print(f"\n>>> Error: Failed to create VM: {(res.stderr or res.stdout).strip()}")
         return None
 
-    gen_disk_val = data_disk or "gcp-general-disk"
-    save_active_vm(name, zone, target_project, gen_disk_val)
+    general_disk = data_disk or DEFAULT_GENERAL_DISK
+    save_active_vm(name, zone, target_project, general_disk, machine_type)
+    discover_instances(target_project, refresh=True)
     return {
         "instance": name,
         "zone": zone,
         "project": target_project,
-        "general_disk": gen_disk_val
+        "general_disk": general_disk,
+        "machine_type": machine_type,
     }
 
 
-def delete_vm_instance(name: str, zone: str, delete_disks: list[str] = None, project: str = "") -> bool:
+def delete_vm_instance(name: str, zone: str, delete_disks: list[str] | None = None,
+                       project: str = "") -> bool:
     """Delete an instance and optionally its secondary data disks."""
     target_project = project or get_default_project()
     print(f"\n>>> Deleting instance '{name}' in zone '{zone}'...")
-    del_args = ["compute", "instances", "delete", name, f"--zone={zone}", "--quiet"]
+    args = ["compute", "instances", "delete", name, f"--zone={zone}", "--quiet"]
     if target_project:
-        del_args.append(f"--project={target_project}")
-    res = run_gcloud(del_args, check=False)
+        args.append(f"--project={target_project}")
+    res = run_gcloud(args, check=False)
     if res.returncode != 0:
-        print(f">>> Error: Failed to delete VM: {res.stderr}")
+        print(f">>> Error: Failed to delete VM: {(res.stderr or res.stdout).strip()}")
         return False
 
-    if delete_disks:
-        for d in delete_disks:
-            print(f">>> Deleting data disk '{d}' in zone '{zone}'...")
-            dd_args = ["compute", "disks", "delete", d, f"--zone={zone}", "--quiet"]
-            if target_project:
-                dd_args.append(f"--project={target_project}")
-            run_gcloud(dd_args, check=False)
+    for disk in delete_disks or []:
+        print(f">>> Deleting data disk '{disk}' in zone '{zone}'...")
+        disk_args = ["compute", "disks", "delete", disk, f"--zone={zone}", "--quiet"]
+        if target_project:
+            disk_args.append(f"--project={target_project}")
+        run_gcloud(disk_args, check=False)
 
+    discover_instances(target_project, refresh=True)
     return True

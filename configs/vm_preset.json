@@ -13,7 +13,7 @@
       "name": "gcp-general-disk",
       "size_gb": 500,
       "type": "pd-balanced",
-      "device_name": "rom-storage",
+      "device_name": "rom-general",
       "role": "General Shared Disk (Fits GCP 500GB SSD free-tier limit, auto-mounts on demand)"
     },
     "rom_a16": {

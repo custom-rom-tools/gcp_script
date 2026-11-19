@@ -44,7 +44,8 @@ def submenu_select_vm(vms: list[dict], project: str) -> dict | None:
         c_idx = int(choice)
         if 1 <= c_idx <= len(vms):
             selected = vms[c_idx - 1]
-            save_active_vm(selected["name"], selected["zone"], project, selected["general_disk"])
+            save_active_vm(selected["name"], selected["zone"], project,
+                           selected["general_disk"], selected.get("machine_type", ""))
             print(f"\n{GREEN}>>> Active VM: {BOLD}{selected['name']}{NC} {selected['zone']}{NC}")
             time.sleep(1)
             return {
@@ -196,7 +197,8 @@ def submenu_delete_vm(vms: list[dict], project: str) -> bool:
         if target_name == cur_vm.get("instance"):
             remaining = [v for v in discover_instances(project) if v["name"] != target_name]
             if remaining:
-                save_active_vm(remaining[0]["name"], remaining[0]["zone"], project, remaining[0]["general_disk"])
+                save_active_vm(remaining[0]["name"], remaining[0]["zone"], project,
+                               remaining[0]["general_disk"], remaining[0].get("machine_type", ""))
         print(f"\n{GREEN}>>> VM deleted.{NC}")
         pause()
         return True
@@ -215,7 +217,12 @@ def submenu_toggle_power(vms: list[dict], project: str):
     pwr_num = read_input(f" Enter VM number 1-{len(vms)}: ").strip()
     if pwr_num.isdigit() and 1 <= int(pwr_num) <= len(vms):
         target_v = vms[int(pwr_num) - 1]
-        target_dict = {"instance": target_v["name"], "zone": target_v["zone"], "project": project}
+        target_dict = {
+            "instance": target_v["name"],
+            "zone": target_v["zone"],
+            "project": project,
+            "general_disk": target_v.get("general_disk", "gcp-general-disk"),
+        }
         if target_v["status"] == "RUNNING":
             stop_vm(target_dict)
         else:

@@ -253,6 +253,29 @@ def discover_candidates(search_dir: Path, build_type: str, remote_subdir: str = 
                 chosen.sort(key=lambda x: x.stat().st_mtime, reverse=True)
                 candidates.append(chosen[0])
 
+        case "kernel":
+            all_imgs = list(search_dir.glob("*.img"))
+            if not all_imgs and search_dir.name == "product":
+                all_imgs = list(search_dir.glob("*/*.img"))
+            imgs = [
+                i for i in all_imgs
+                if i.name.lower() == "boot.img"
+                or i.stem.lower().startswith("boot-")
+                or i.stem.lower().startswith("boot_")
+            ]
+            if not imgs:
+                imgs = [
+                    i for i in all_imgs
+                    if not any(
+                        skip in i.name.lower()
+                        for skip in ["recovery", "dtbo", "logo", "vbmeta", "super",
+                                     "vendor_boot", "init_boot"]
+                    )
+                ]
+            if imgs:
+                imgs.sort(key=get_build_sort_key, reverse=True)
+                candidates.append(imgs[0])
+
         case "rom" | _:
             all_zips = list(search_dir.glob("*.zip"))
             if not all_zips and search_dir.name == "product":
@@ -771,7 +794,7 @@ def main():
 
     explicit_type = ""
     extra_start = 3
-    if len(sys.argv) > 3 and sys.argv[3].lower() in ["rom", "recovery"]:
+    if len(sys.argv) > 3 and sys.argv[3].lower() in ["rom", "recovery", "kernel"]:
         explicit_type = sys.argv[3].lower()
         extra_start = 4
 

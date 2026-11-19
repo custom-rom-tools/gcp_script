@@ -1,15 +1,17 @@
 """
 Authentication Menu (cli/tools/auth.py)
-Provides Google Cloud account sign-in and account switching.
+Google Cloud account sign-in and account switching.
 """
 
 from cli.base import clear_screen, print_header, pause
-from cli.services.vm import login_gcloud
+from cli.services.vm import check_gcloud_auth, login_gcloud
 
 
 def submenu_gcloud_auth():
-    """Submenu to sign in or switch active Google Cloud account."""
+    """Sign in or switch the active Google Cloud account."""
     clear_screen()
-    print_header("Google Cloud Account Authentication")
+    print_header("GOOGLE CLOUD ACCOUNT AUTHENTICATION")
+    account = check_gcloud_auth()
+    print(f" Current account: {account or 'Not Authenticated'}\n")
     login_gcloud()
     pause()
