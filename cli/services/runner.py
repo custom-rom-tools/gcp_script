@@ -29,33 +29,78 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REMOTE_FARM = "~/.gcp_farm"
 
 NET_SPEED_SCRIPT = r"""#!/usr/bin/env bash
-# GCP-NET-SPEED-V2
+# GCP-NET-SPEED-V3
 MODE="$1"
 STATE_FILE="/tmp/vm_net_speed_$(id -u).state"
+
 read -r now_t _ < /proc/uptime || exit 0
 read -r rx tx < <(awk '
   /:/ { gsub(/:/, " "); if ($1 != "lo" && $1 !~ /^(veth|docker|br-|virbr)/) { rx += $2; tx += $10; } }
   END { printf "%.0f %.0f\n", rx, tx }
 ' /proc/net/dev)
-[ -r "$STATE_FILE" ] && read -r prev_t prev_rx prev_tx < "$STATE_FILE" 2>/dev/null || true
-printf '%s %s %s\n' "$now_t" "$rx" "$tx" > "$STATE_FILE" 2>/dev/null || true
+
+read -r _ u n s i w irq sirq st _ < /proc/stat
+cpu_total=$((u + n + s + i + w + irq + sirq + st))
+cpu_idle=$((i + w))
+
+read -r mem_total mem_avail < <(awk '
+  /^MemTotal:/ { t = $2 }
+  /^MemAvailable:/ { a = $2 }
+  END { printf "%.0f %.0f\n", t, a }
+' /proc/meminfo)
+
+[ -r "$STATE_FILE" ] && read -r prev_t prev_rx prev_tx prev_cpu_total prev_cpu_idle < "$STATE_FILE" 2>/dev/null || true
+printf '%s %s %s %s %s\n' "$now_t" "$rx" "$tx" "$cpu_total" "$cpu_idle" > "$STATE_FILE" 2>/dev/null || true
+
 awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
-    -v prev_t="${prev_t:-0}" -v prev_rx="${prev_rx:-0}" -v prev_tx="${prev_tx:-0}" '
+    -v prev_t="${prev_t:-0}" -v prev_rx="${prev_rx:-0}" -v prev_tx="${prev_tx:-0}" \
+    -v cpu_tot="$cpu_total" -v cpu_idl="$cpu_idle" \
+    -v prev_cpu_tot="${prev_cpu_total:-0}" -v prev_cpu_idl="${prev_cpu_idle:-0}" \
+    -v m_tot="$mem_total" -v m_avail="$mem_avail" '
   function fmt(b) {
     if (b >= 1048576) return sprintf("%.1f MB/s", b / 1048576);
     if (b >= 1024)    return sprintf("%.0f KB/s", b / 1024);
     return sprintf("%.0f B/s", b);
   }
   BEGIN {
+    d_tot = cpu_tot - prev_cpu_tot;
+    d_idl = cpu_idl - prev_cpu_idl;
+    if (d_tot > 0 && d_idl >= 0) {
+      cpu_pct = int(100 * (d_tot - d_idl) / d_tot);
+      if (cpu_pct < 0) cpu_pct = 0;
+      if (cpu_pct > 100) cpu_pct = 100;
+    } else {
+      cpu_pct = 0;
+    }
+
+    if (m_tot > 0) {
+      ram_pct = int(100 * (m_tot - m_avail) / m_tot);
+    } else {
+      ram_pct = 0;
+    }
+
     dt = now_t - prev_t;
     if (prev_t <= 0 || dt <= 0 || dt > 60 || rx < prev_rx || tx < prev_tx) {
-      if (mode == "--tmux") print "#[fg=colour245]DL -- #[fg=colour242]| #[fg=colour245]UL --";
-      else print "DL -- | UL --";
+      dl_str = "DL --";
+      ul_str = "UL --";
     } else {
-      dl = fmt((rx - prev_rx) / dt);
-      ul = fmt((tx - prev_tx) / dt);
-      if (mode == "--tmux") printf "#[fg=colour82,bold]DL %s #[fg=colour242]| #[fg=colour214,bold]UL %s\n", dl, ul;
-      else printf "DL %s | UL %s\n", dl, ul;
+      dl_str = sprintf("DL %s", fmt((rx - prev_rx) / dt));
+      ul_str = sprintf("UL %s", fmt((tx - prev_tx) / dt));
+    }
+
+    if (mode == "--tmux") {
+      if (cpu_pct >= 85) c_cpu = "#[fg=colour196,bold]";
+      else if (cpu_pct >= 50) c_cpu = "#[fg=colour220,bold]";
+      else c_cpu = "#[fg=colour82,bold]";
+
+      if (ram_pct >= 85) c_ram = "#[fg=colour196,bold]";
+      else if (ram_pct >= 70) c_ram = "#[fg=colour220,bold]";
+      else c_ram = "#[fg=colour51,bold]";
+
+      printf "%sCPU %d%% #[fg=colour242]| %sRAM %d%% #[fg=colour242]| #[fg=colour82,bold]%s #[fg=colour242]| #[fg=colour214,bold]%s\n",
+             c_cpu, cpu_pct, c_ram, ram_pct, dl_str, ul_str;
+    } else {
+      printf "CPU %d%% | RAM %d%% | %s | %s\n", cpu_pct, ram_pct, dl_str, ul_str;
     }
   }
 '
@@ -77,7 +122,7 @@ set -g status-left-length 30
 set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_label,#{@build_label},BUILD} #[bg=colour235,fg=colour39] "
 set -g window-status-style "bg=colour235,fg=colour245"
 set -g window-status-current-style "bg=colour238,fg=colour255,bold"
-set -g status-right-length 140
+set -g status-right-length 160
 set -g status-right "#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 """
 
@@ -93,10 +138,10 @@ def net_speed_setup_cmd() -> str:
     """Shell snippet installing the net-speed helper and tmux styling."""
     net_b64 = base64.b64encode(NET_SPEED_SCRIPT.encode()).decode()
     tmux_b64 = base64.b64encode(TMUX_CONF.encode()).decode()
-    return f"""if ! grep -q 'GCP-NET-SPEED-V2' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
+    return f"""if ! grep -q 'GCP-NET-SPEED-V3' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '{net_b64}' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V7' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V8' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '{tmux_b64}' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
@@ -115,7 +160,7 @@ tmux set-option -g status-left-length 30 2>/dev/null || true
 tmux set-option -g status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour235,fg=colour39] ' 2>/dev/null || true
 tmux set-window-option -g window-status-style 'bg=colour235,fg=colour245' 2>/dev/null || true
 tmux set-window-option -g window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
-tmux set-option -g status-right-length 140 2>/dev/null || true
+tmux set-option -g status-right-length 160 2>/dev/null || true
 tmux set-option -g status-right '#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 tmux set-option -u -t rom-build mouse 2>/dev/null || true
 tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
@@ -125,7 +170,7 @@ tmux set-option -t rom-build status-left-length 30 2>/dev/null || true
 tmux set-option -t rom-build status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour235,fg=colour39] ' 2>/dev/null || true
 tmux set-window-option -t rom-build window-status-style 'bg=colour235,fg=colour245' 2>/dev/null || true
 tmux set-window-option -t rom-build window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
-tmux set-option -t rom-build status-right-length 140 2>/dev/null || true
+tmux set-option -t rom-build status-right-length 160 2>/dev/null || true
 tmux set-option -t rom-build status-right '#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 """
 
