@@ -819,6 +819,15 @@ def ensure_running(vm: dict, target_disk: str, mount_point: str) -> bool:
         except subprocess.TimeoutExpired:
             state = "NEED_FULL"
         if state == "MOUNTED_EXACT":
+            # Auto-activate existing swapfile in background if inactive
+            _sw_cmd = (
+                f"( for sw in {shlex.quote(mount_point)}/swapfile /swapfile; do "
+                "if [ -f \"$sw\" ] && ! grep -q \"$sw\" /proc/swaps 2>/dev/null; then "
+                "sudo chmod 600 \"$sw\" 2>/dev/null || true; "
+                "sudo swapon \"$sw\" 2>/dev/null || { sudo mkswap \"$sw\" 2>/dev/null && sudo swapon \"$sw\" 2>/dev/null; } || true; "
+                "fi; done ) >/dev/null 2>&1 &"
+            )
+            vm_exec(vm, _sw_cmd, check=False, timeout=10)
             return True
         if state == "NEEDS_REMOUNT":
             print(f">>> Mounting {target_disk} at {mount_point} (unmounting previous mount if any)...")

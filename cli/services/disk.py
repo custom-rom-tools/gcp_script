@@ -395,7 +395,10 @@ if ! mountpoint -q {mp}; then
 fi
 sudo resize2fs "$REAL_DEV" 2>/dev/null || true
 sudo chown $USER:$USER {mp} 2>/dev/null || true
-[ ! -f {mp}/swapfile ] || sudo swapon {mp}/swapfile 2>/dev/null || true
+if [ -f {mp}/swapfile ] && ! grep -q "{mp}/swapfile" /proc/swaps 2>/dev/null; then
+    sudo chmod 600 {mp}/swapfile 2>/dev/null || true
+    sudo swapon {mp}/swapfile 2>/dev/null || {{ sudo mkswap {mp}/swapfile 2>/dev/null && sudo swapon {mp}/swapfile 2>/dev/null; }} || true
+fi
 [ -L {mp}/source ] && rm -f {mp}/source 2>/dev/null || true
 """
     res = vm_exec(vm, cmd, check=False, timeout=180)

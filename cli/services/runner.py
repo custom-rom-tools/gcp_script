@@ -314,13 +314,14 @@ WantedBy=multi-user.target
 def _runner_script(vm: dict, command: str, branch: str, mount_point: str, variant: str,
                    sf_upload: bool, gofile_upload: bool, auto_shutdown: bool,
                    build_label: str, win_label: str, device: str,
-                   target_label: str = "", detail_label: str = "") -> str:
+                   target_label: str = "", detail_label: str = "",
+                   target_id: str = "") -> str:
     net_setup = net_speed_setup_cmd()
     q_mp = shlex.quote(mount_point)
     q_status = shlex.quote(f"{mount_point}/build.status")
     q_log = shlex.quote(f"{mount_point}/build.log")
     q_target = shlex.quote(f"{mount_point}/.gcp_build_target")
-    marker = target_label or branch
+    marker = f"{target_id}|{target_label}" if target_id else (target_label or branch)
 
     return f"""#!/usr/bin/env bash
 export BUILD_VARIANT={shlex.quote(variant)}
@@ -355,6 +356,15 @@ if [ {shlex.quote(branch)} = 'recovery' ] && [ {q_mp} != '/mnt/recovery' ]; then
     sudo mkdir -p {q_mp}/recovery && sudo ln -sfn {q_mp}/recovery /mnt/recovery
 fi
 echo "BUILD_STATUS: RUNNING ($BUILD_VARIANT) - $(date)" > {q_status} 2>/dev/null || true
+
+# Auto-activate existing swapfile on build disk or root disk if inactive
+for sw in {q_mp}/swapfile /swapfile; do
+    if [ -f "$sw" ] && ! grep -q "$sw" /proc/swaps 2>/dev/null; then
+        echo ">>> [SWAP] Activating existing swapfile at $sw in background..."
+        sudo chmod 600 "$sw" 2>/dev/null || true
+        sudo swapon "$sw" 2>/dev/null || {{ sudo mkswap "$sw" 2>/dev/null && sudo swapon "$sw" 2>/dev/null; }} || true
+    fi
+done
 
 stty -ixon -ixoff 2>/dev/null || true
 stty stop undef 2>/dev/null || true
@@ -436,33 +446,144 @@ exec bash
 """
 
 
-def _general_disk_data_prompt(vm: dict, target_disk: str, mount_point: str, branch: str,
-                              label: str = "") -> None:
+def _target_work_folder(target_type: str, name: str, version: str) -> str:
+    """Return the expected workspace directory basename (e.g. 'evox', 'los', 'ofrp')."""
+    target_type = (target_type or "rom").lower()
+    name = (name or "").lower()
+    ver = str(version or "").lower()
+    if target_type == "recovery":
+        try:
+            cfg_path = REPO_ROOT / "configs" / "recovery.json"
+            if cfg_path.exists():
+                rec_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                if name in rec_cfg and "work_dir" in rec_cfg[name]:
+                    return Path(rec_cfg[name]["work_dir"]).name
+        except Exception:
+            pass
+        return name
+    elif target_type == "kernel":
+        try:
+            cfg_path = REPO_ROOT / "configs" / "kernel.json"
+            if cfg_path.exists():
+                kern_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                if name in kern_cfg:
+                    ver_cfg = kern_cfg[name].get("versions", {}).get(ver, {})
+                    if "work_dir" in ver_cfg:
+                        return Path(ver_cfg["work_dir"]).name
+        except Exception:
+            pass
+        return "evox" if "evo" in name else name
+    else:  # rom
+        try:
+            cfg_path = REPO_ROOT / "configs" / "rom.json"
+            if cfg_path.exists():
+                rom_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                if name in rom_cfg:
+                    ver_cfg = rom_cfg[name].get("versions", {}).get(ver, {})
+                    if "work_dir" in ver_cfg:
+                        return Path(ver_cfg["work_dir"]).name
+                for rname, rinfo in rom_cfg.items():
+                    if name in rinfo.get("aliases", []):
+                        ver_cfg = rinfo.get("versions", {}).get(ver, {})
+                        if "work_dir" in ver_cfg:
+                            return Path(ver_cfg["work_dir"]).name
+        except Exception:
+            pass
+        if "evo" in name:
+            return "evox"
+        if "lineage" in name or name == "los":
+            return "los"
+        return name
+
+
+def _general_disk_data_prompt(
+    vm: dict,
+    target_disk: str,
+    mount_point: str,
+    branch: str,
+    target_label: str = "",
+    target_type: str = "rom",
+    target_name: str = "",
+    version: str = "",
+    disk_mode: str = "general",
+    target_id: str = "",
+) -> None:
     if not is_interactive():
         return
-    info = vm_exec(
-        vm,
-        f"PREV=''; [ -f {shlex.quote(mount_point)}/.gcp_build_target ] && "
-        f"PREV=$(cat {shlex.quote(mount_point)}/.gcp_build_target 2>/dev/null | tr -d '\\r'); "
-        f"USED=$(df -h {shlex.quote(mount_point)} | awk 'NR==2{{print $3\" / \"$2\" (Free: \"$4\")\"}}'); "
-        f"DIRS=$(ls -1A {shlex.quote(mount_point)} 2>/dev/null | grep -vx 'lost+found' | "
-        f"grep -vx '.gcp_build_target' | head -n 6 | tr '\\n' ' '); "
-        'echo "PREV=$PREV|USED=$USED|DIRS=$DIRS"',
-        check=False, timeout=30,
+    py_code = (
+        f"import os, json, shutil\n"
+        f"mp = {repr(mount_point)}\n"
+        f"prev = ''\n"
+        f"tf = os.path.join(mp, '.gcp_build_target')\n"
+        f"if os.path.isfile(tf):\n"
+        f"    try:\n"
+        f"        with open(tf, 'r', encoding='utf-8', errors='ignore') as f: prev = f.read().strip()\n"
+        f"    except Exception: pass\n"
+        f"used = ''\n"
+        f"try:\n"
+        f"    u = shutil.disk_usage(mp)\n"
+        f"    used = f'{{u.used / (1024**3):.1f}}G / {{u.total / (1024**3):.1f}}G (Free: {{u.free / (1024**3):.1f}}G)'\n"
+        f"except Exception: pass\n"
+        f"dirs = []\n"
+        f"try:\n"
+        f"    ign = {{'lost+found', '.gcp_build_target', 'swapfile', 'build.log', 'build.status'}}\n"
+        f"    for e in sorted(os.listdir(mp)):\n"
+        f"        if e not in ign: dirs.append(e)\n"
+        f"except Exception: pass\n"
+        f"print(json.dumps({{'prev': prev, 'used': used, 'dirs': dirs}}))\n"
     )
-    raw = (info.stdout or "").strip()
-    prev = raw.split("PREV=", 1)[1].split("|", 1)[0] if "PREV=" in raw else ""
-    used = raw.split("USED=", 1)[1].split("|", 1)[0] if "USED=" in raw else ""
-    dirs = raw.split("DIRS=", 1)[1].strip() if "DIRS=" in raw else ""
-    if not dirs or prev == branch:
+    b64 = base64.b64encode(py_code.encode()).decode()
+    res = vm_exec(vm, f"python3 -c \"$(printf '%s' '{b64}' | base64 -d)\"", check=False, timeout=30)
+    out = (res.stdout or "").strip()
+    data: dict = {}
+    if out:
+        try:
+            data = json.loads(out)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    dir_list: list[str] = data.get("dirs", [])
+    if not dir_list:
         return
-    display = label or branch
-    print(f"\n{YELLOW}>>> Notice: General disk ({target_disk}) at {mount_point} contains existing data!{NC}")
-    if prev:
-        print(f"    Previous Target : {BOLD}{prev}{NC} (New: {BOLD}{display}{NC})")
+
+    prev = str(data.get("prev", ""))
+    used = str(data.get("used", ""))
+
+    tid = (target_id or f"{target_type.lower()}:{target_name.lower()}:{version}").lower()
+    prev_clean = prev.strip()
+    prev_id = prev_clean.split("|")[0].strip().lower() if "|" in prev_clean else prev_clean.lower()
+    target_work_folder = _target_work_folder(target_type, target_name, version)
+
+    is_same_target = False
+    if prev_id and prev_id == tid:
+        is_same_target = True
+    elif tid in prev_clean.lower():
+        is_same_target = True
+    elif target_name.lower() in prev_clean.lower() and str(version) in prev_clean:
+        is_same_target = True
+    elif target_work_folder and target_work_folder in dir_list:
+        # Expected workspace folder is present on disk
+        if not prev_id or prev_id in (target_label.lower(), branch.lower(), f"aosp-{version}".lower(), f"rom a{version}".lower(), "recovery"):
+            is_same_target = True
+        elif target_name.lower() in prev_id:
+            is_same_target = True
+    elif disk_mode != "general":
+        # Specific/dedicated disk
+        if not prev_id or prev_id in (target_label.lower(), branch.lower(), f"aosp-{version}".lower(), f"rom a{version}".lower(), "recovery"):
+            is_same_target = True
+
+    if is_same_target:
+        return
+
+    display = target_label or branch
+    prev_display = prev_clean.split("|")[1].strip() if "|" in prev_clean else prev_clean
+    dirs_display = " ".join(dir_list[:6])
+    print(f"\n{YELLOW}>>> Notice: Storage disk ({target_disk}) at {mount_point} contains existing data from a different target!{NC}")
+    if prev_display:
+        print(f"    Previous Target : {BOLD}{prev_display}{NC} (New: {BOLD}{display}{NC})")
     if used:
         print(f"    Disk Usage      : {used}")
-    print(f"    Top Entries     : {dirs}")
+    print(f"    Top Entries     : {dirs_display}")
     answer = read_input(f" Format '{target_disk}' clean (ext4) before starting '{display}' build? [y/N, default: N]: ")
     if answer.strip().lower() in ("y", "yes"):
         if format_disk_action(vm, target_disk, auto_yes=True):
@@ -494,26 +615,31 @@ def dispatch_build(
     if target_type == "recovery":
         resolved = resolve_build_disk(vm, "recovery")
         branch = "recovery"
-        target_label = "Recovery"
+        rom_display = _format_display_name(name)
+        target_label = f"{rom_display} Recovery"
         build_label = "RECOVERY"
         win_label = f"{name}_{device}".lower()
         detail_label = f"{name.upper()} • {device.strip().upper()}"
+        target_id = f"recovery:{name.lower()}:recovery"
     elif target_type == "kernel":
         resolved = resolve_build_disk(vm, version)
         # Kernel builds share the ROM workspace, so track the same target.
         branch = f"aosp-{version}"
-        target_label = f"A{version} Kernel"
+        rom_display = _format_display_name(name)
+        target_label = f"{rom_display} A{version} Kernel"
         build_label = f"KERNEL A{version}"
         win_label = f"kernel-{name}-{version}".lower()
         detail_label = f"{name} • {device.strip().upper()}"
+        target_id = f"kernel:{name.lower()}:{version}"
     else:
         resolved = resolve_build_disk(vm, version)
         branch = f"aosp-{version}"
-        target_label = f"ROM A{version}"
+        rom_display = _format_display_name(name)
+        target_label = f"{rom_display} ROM A{version}"
         build_label = f"ROM A{version}"
         win_label = f"{name}_{device}".lower()
-        rom_display = _format_display_name(name)
         detail_label = f"{rom_display} • {device.strip().upper()}"
+        target_id = f"rom:{name.lower()}:{version}"
 
     target_disk = resolved["disk"]
     mount_point = resolved["mount_point"]
@@ -552,9 +678,31 @@ def dispatch_build(
         print(">>> Error: Could not prepare the build disk.")
         return False
 
+    # Auto-activate existing swapfile on build disk or root disk if inactive (in background)
+    vm_exec(
+        vm,
+        f"( for sw in {shlex.quote(mount_point)}/swapfile /swapfile; do "
+        "if [ -f \"$sw\" ] && ! grep -q \"$sw\" /proc/swaps 2>/dev/null; then "
+        "sudo chmod 600 \"$sw\" 2>/dev/null || true; "
+        "sudo swapon \"$sw\" 2>/dev/null || { sudo mkswap \"$sw\" 2>/dev/null && sudo swapon \"$sw\" 2>/dev/null; } || true; "
+        "fi; done ) >/dev/null 2>&1 &",
+        check=False, timeout=10,
+    )
+
     # 5. Refresh the watchdog and push guest tools before launching.
     deploy_watchdog(vm)
-    _general_disk_data_prompt(vm, target_disk, mount_point, branch, target_label)
+    _general_disk_data_prompt(
+        vm=vm,
+        target_disk=target_disk,
+        mount_point=mount_point,
+        branch=branch,
+        target_label=target_label,
+        target_type=target_type,
+        target_name=name,
+        version=str(version),
+        disk_mode=disk_mode,
+        target_id=target_id,
+    )
     sync_build_tools_to_vm(vm)
 
     # 6. Build runner command.
@@ -581,7 +729,7 @@ def dispatch_build(
         variant=variant, sf_upload=sf_upload, gofile_upload=gofile_upload,
         auto_shutdown=auto_shutdown, build_label=build_label,
         win_label=win_label, device=device, target_label=target_label,
-        detail_label=detail_label,
+        detail_label=detail_label, target_id=target_id,
     )
     runner_b64 = base64.b64encode(runner.encode()).decode()
 
