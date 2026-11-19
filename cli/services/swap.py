@@ -7,6 +7,8 @@ the small boot disk.
 
 from __future__ import annotations
 
+import base64
+import json
 import shlex
 
 from cli.services.vm import is_vm_running, vm_exec
@@ -101,18 +103,53 @@ def disable_all_swap(vm: dict) -> bool:
     return res.returncode == 0
 
 
-def list_swapfiles(vm: dict) -> str:
-    """List the common swapfile locations."""
+def find_existing_swapfiles(vm: dict) -> list[dict]:
+    """Scan the VM for existing swapfiles (both active and inactive)."""
     if not is_vm_running(vm):
-        return ""
-    res = vm_exec(
-        vm,
-        "ls -lh /swapfile /mnt/a16/swapfile /mnt/a17/swapfile "
-        "/mnt/recovery/swapfile 2>/dev/null || echo 'No common swapfiles found.'",
-        check=False,
-        timeout=20,
+        return []
+    py_code = (
+        "import os, glob, json\n"
+        "active = set()\n"
+        "try:\n"
+        "    with open('/proc/swaps', 'r') as f:\n"
+        "        for line in f.readlines()[1:]:\n"
+        "            p = line.split()\n"
+        "            if p: active.add(p[0])\n"
+        "except Exception: pass\n"
+        "cands = set(active)\n"
+        "cands.update(['/swapfile', '/mnt/a16/swapfile', '/mnt/a17/swapfile', '/mnt/recovery/swapfile'])\n"
+        "for p in glob.glob('/mnt/*/swapfile'): cands.add(p)\n"
+        "res = []\n"
+        "for p in sorted(cands):\n"
+        "    if os.path.isfile(p):\n"
+        "        try:\n"
+        "            sz = os.path.getsize(p)\n"
+        "            sz_str = f'{sz / (1024**3):.0f}G' if sz >= 1024**3 else f'{sz / (1024**2):.0f}M'\n"
+        "        except Exception: sz_str = 'unknown'\n"
+        "        res.append({'path': p, 'size': sz_str, 'active': p in active})\n"
+        "print(json.dumps(res))"
     )
-    return (res.stdout or "").replace("\r", "").strip()
+    b64 = base64.b64encode(py_code.encode()).decode()
+    res = vm_exec(vm, f"python3 -c \"$(printf '%s' '{b64}' | base64 -d)\"", check=False, timeout=30)
+    out = (res.stdout or "").strip()
+    if out:
+        try:
+            return json.loads(out)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return []
+
+
+def list_swapfiles(vm: dict) -> str:
+    """List the common swapfile locations formatted as a string."""
+    files = find_existing_swapfiles(vm)
+    if not files:
+        return "No common swapfiles found."
+    lines = []
+    for item in files:
+        act = " [ACTIVE]" if item.get("active") else ""
+        lines.append(f"{item['path']} ({item['size']}){act}")
+    return "\n".join(lines)
 
 
 def delete_swap(vm: dict, path: str) -> bool:

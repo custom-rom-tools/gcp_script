@@ -10,7 +10,7 @@ from cli.base import (
 )
 from cli.services.swap import (
     get_swap_details, create_swap, create_boot_swap,
-    disable_all_swap, list_swapfiles, delete_swap,
+    disable_all_swap, find_existing_swapfiles, delete_swap,
 )
 from cli.services.vm import is_vm_running
 
@@ -26,6 +26,66 @@ def _prompt_size(default: int) -> int:
         return size if size > 0 else 0
     except ValueError:
         return 0
+
+
+def submenu_delete_swap(vm: dict) -> None:
+    """Interactively select and delete an existing swapfile on the VM."""
+    print(f"\n{YELLOW}>>> Searching for existing swapfiles on VM...{NC}")
+    swapfiles = find_existing_swapfiles(vm)
+
+    print_divider()
+    if swapfiles:
+        print(f" {BOLD}Existing Swapfiles on VM:{NC}\n")
+        for idx, item in enumerate(swapfiles, 1):
+            status = f"{GREEN}[ACTIVE]{NC}" if item.get("active") else f"{YELLOW}[INACTIVE]{NC}"
+            print(f"  {GREEN}{idx}){NC} {BOLD}{item['path']}{NC} ({item['size']}) {status}")
+        print()
+        print(f"  {CYAN}c){NC} Enter custom swapfile path")
+        print()
+        print(f"  {RED}0 / q){NC} Cancel / Back")
+        print_divider()
+
+        choice = read_input(
+            f" Select swapfile to DELETE [1-{len(swapfiles)}, c, 0/q, default: 1]: "
+        ).strip().lower()
+        if not choice:
+            choice = "1"
+        if choice in ("0", "q", "quit", "exit"):
+            return
+        if choice == "c":
+            path = read_input(" Enter full path of swapfile to DELETE [q=abort]: ").strip()
+            if not path or path.lower() in ("q", "quit", "exit"):
+                return
+        elif choice.isdigit() and 1 <= int(choice) <= len(swapfiles):
+            path = swapfiles[int(choice) - 1]["path"]
+        else:
+            print(">>> Invalid selection.")
+            pause()
+            return
+    else:
+        print(f" {YELLOW}No swapfiles found on VM.{NC}\n")
+        print(f"  {CYAN}c){NC} Enter custom swapfile path")
+        print()
+        print(f"  {RED}0 / q){NC} Cancel / Back")
+        print_divider()
+        choice = read_input(" Select option [c, 0/q, default: 0]: ").strip().lower()
+        if choice != "c":
+            return
+        path = read_input(" Enter full path of swapfile to DELETE [q=abort]: ").strip()
+        if not path or path.lower() in ("q", "quit", "exit"):
+            return
+
+    confirm = read_input(
+        f" Are you sure you want to delete '{path}'? [y/N, default: N, q=abort]: "
+    ).strip().lower()
+    if confirm not in ("y", "yes"):
+        print(">>> Swapfile deletion cancelled.")
+        pause()
+        return
+
+    if delete_swap(vm, path):
+        print(f">>> Swapfile '{path}' deleted successfully.")
+    pause()
 
 
 def submenu_swap_manager(vm: dict):
@@ -103,10 +163,4 @@ def submenu_swap_manager(vm: dict):
                 print(">>> VM is powered OFF. Start it first.")
                 pause()
                 continue
-            print(f"{YELLOW}>>> Searching for existing swapfiles on VM...{NC}")
-            print(list_swapfiles(vm) or "No common swapfiles found.")
-            path = read_input(" Enter full path of swapfile to DELETE [default: /mnt/a16/swapfile]: ").strip() or "/mnt/a16/swapfile"
-            if path:
-                if delete_swap(vm, path):
-                    print(f">>> Swapfile {path} deleted.")
-            pause()
+            submenu_delete_swap(vm)
