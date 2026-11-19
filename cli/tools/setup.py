@@ -21,8 +21,6 @@ from cli.services.vm import (
     is_vm_running, get_instance_machine_type, get_vm_info, set_machine_type,
     MACHINE_TYPES,
 )
-from cli.ops.link import submenu_view_links
-from cli.tools.console import submenu_ssh_console
 
 
 def submenu_upload_env(vm: dict):
@@ -231,14 +229,12 @@ def run_tools_menu(vm: dict):
         print(f" {BOLD}4){NC} Configure Git Dummy Identity (avoid 429 rate limits)")
         print(f" {BOLD}5){NC} Change VM Timezone (IST or custom)")
         print(f" {BOLD}6){NC} Upload .env Credentials")
-        print(f" {BOLD}7){NC} View Upload Links")
-        print(f" {BOLD}8){NC} Open SSH Console")
         print()
         print(f" {YELLOW}r){NC} Reload / Refresh Tools Menu")
         print(f" {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input("Select option [0-8, r, q, default: 0]: ").strip().lower()
+        choice = read_input("Select option [0-6, r, q, default: 0]: ").strip().lower()
         if choice in ("0", "q", "quit", "exit"):
             return
         if choice in ("r", "reload", "refresh"):
@@ -259,7 +255,3 @@ def run_tools_menu(vm: dict):
             submenu_timezone(vm)
         elif choice == "6":
             submenu_upload_env(vm)
-        elif choice == "7":
-            submenu_view_links(vm)
-        elif choice == "8":
-            submenu_ssh_console(vm)
