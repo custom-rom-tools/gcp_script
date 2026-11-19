@@ -261,7 +261,6 @@ def _runner_script(vm: dict, command: str, branch: str, mount_point: str, varian
 
     return f"""#!/usr/bin/env bash
 export BUILD_VARIANT={shlex.quote(variant)}
-export SOONG_INCREMENTAL_ANALYSIS=true
 export SF_UPLOAD={'true' if sf_upload else 'false'}
 export SKIP_GOFILE={'false' if gofile_upload else 'true'}
 export AUTO_SHUTDOWN=false
