@@ -1,0 +1,49 @@
+{
+  "default_zone": "us-central1-a",
+  "default_machine_type": "c2d-standard-16",
+  "machine_types": [
+    { "type": "t2d-standard-16", "desc": "16 AMD Milan vCPU, 64GB RAM (Cheapest Tau, ~$0.675/hr)" },
+    { "type": "c2d-standard-16", "desc": "16 AMD Milan vCPU, 64GB RAM (Fastest Compiles, ~$0.726/hr)" },
+    { "type": "c2-standard-16",  "desc": "16 Intel Cascade Lake vCPU, 64GB RAM (~$0.835/hr)" },
+    { "type": "n2d-standard-16", "desc": "16 AMD Rome vCPU, 64GB RAM (~$0.698/hr)" },
+    { "type": "n2-standard-16",  "desc": "16 Intel Ice Lake vCPU, 64GB RAM (~$0.778/hr)" }
+  ],
+  "disks": {
+    "general": {
+      "name": "gcp-general-disk",
+      "size_gb": 500,
+      "type": "pd-balanced",
+      "device_name": "rom-general",
+      "role": "General Shared Disk (Fits GCP 500GB SSD free-tier limit, auto-mounts on demand)"
+    },
+    "rom_a16": {
+      "name": "gcp-rom-a16-disk",
+      "size_gb": 500,
+      "type": "pd-balanced",
+      "device_name": "rom-a16",
+      "default_mount": "/mnt/a16",
+      "role": "Dedicated Android 16 Storage (/mnt/a16)"
+    },
+    "rom_a17": {
+      "name": "gcp-rom-a17-disk",
+      "size_gb": 500,
+      "type": "pd-balanced",
+      "device_name": "rom-a17",
+      "default_mount": "/mnt/a17",
+      "role": "Dedicated Android 17 Storage (/mnt/a17)"
+    },
+    "recovery": {
+      "name": "gcp-recovery-disk",
+      "size_gb": 300,
+      "type": "pd-balanced",
+      "device_name": "rom-recovery",
+      "default_mount": "/mnt/recovery",
+      "role": "Dedicated Recovery Storage (/mnt/recovery)"
+    },
+    "boot": {
+      "size_gb": 30,
+      "type": "pd-standard",
+      "role": "OS Boot Disk (Ubuntu 22.04 LTS, CCache, Toolchains)"
+    }
+  }
+}

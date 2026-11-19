@@ -1,0 +1,68 @@
+{
+  "atoll": {
+    "name": "Realme Atoll Kernel",
+    "aliases": ["kernel", "atoll"],
+    "default_variant": "userdebug",
+    "build_target": "bootimage",
+    "versions": {
+      "16": {
+        "name": "Android 16",
+        "work_dir": "/mnt/a16/evox",
+        "disk_mount": "/mnt/a16",
+        "disk_name": "gcp-rom-a16-disk",
+        "rom_manifest_url": "https://github.com/Evolution-X/manifest",
+        "rom_manifest_branch": "bka",
+        "lunch_prefix": "lineage",
+        "lunch_suffix": "bp4a",
+        "fallback_lunch_without_suffix": true,
+        "upload_subdir": "Kernel/16",
+        "devices": {
+          "RMX2061": {
+            "name": "Realme 6 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX2061-manifest",
+            "manifest_branch": "evox/bka"
+          },
+          "RMX2170": {
+            "name": "Realme 7 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX2170-manifest",
+            "manifest_branch": "evox/bka"
+          },
+          "RMX3081": {
+            "name": "Realme 8 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX3081-manifest",
+            "manifest_branch": "evox/bka"
+          }
+        }
+      },
+      "17": {
+        "name": "Android 17",
+        "work_dir": "/mnt/a17/evox",
+        "disk_mount": "/mnt/a17",
+        "disk_name": "gcp-rom-a17-disk",
+        "rom_manifest_url": "https://github.com/Evolution-X/manifest",
+        "rom_manifest_branch": "cnb",
+        "lunch_prefix": "lineage",
+        "lunch_suffix": "cp2a",
+        "fallback_lunch_without_suffix": true,
+        "upload_subdir": "Kernel/17",
+        "devices": {
+          "RMX2061": {
+            "name": "Realme 6 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX2061-manifest",
+            "manifest_branch": "evox/cnb"
+          },
+          "RMX2170": {
+            "name": "Realme 7 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX2170-manifest",
+            "manifest_branch": "evox/cnb"
+          },
+          "RMX3081": {
+            "name": "Realme 8 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX3081-manifest",
+            "manifest_branch": "evox/cnb"
+          }
+        }
+      }
+    }
+  }
+}

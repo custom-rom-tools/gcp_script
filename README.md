@@ -1,154 +1,260 @@
-# GCP Build Farm for Android ROMs & Recoveries
+# GCP Build Farm for Android ROMs, Recoveries & Kernels
 
-Cloud build automation and management CLI for compiling custom Android ROMs and Recoveries for Realme Atoll devices (`sm7125`, `RMX2061`, `RMX2170`, `RMX3081`).
+Cloud build automation and management CLI for compiling custom Android ROMs,
+recoveries and kernels for Realme Atoll devices (`sm7125`, `RMX2061`, `RMX2170`,
+`RMX3081`).
+
+The project uses a single modular Python branch: the interactive dashboard,
+build pipelines, VM lifecycle and storage helpers all live together under
+`cli/` and `scripts/`.
 
 ---
 
 ## Architecture & Storage Design
 
-* **Compute Instance (`c2d-standard-16`)**:
-  * 16 AMD EPYC Milan vCPUs with large L3 cache per core and 3.7 GHz boost, 64 GB Physical RAM, located in `us-central1-a`.
-  * Compute-optimized specifically for high-throughput C/C++ Clang, Soong, and Ninja parallel compilation.
-  * Compute billing runs only when the VM is active (~$0.726/hr).
-* **Boot Disk (`50 GB pd-standard`)**:
-  * OS (Ubuntu 22.04 LTS), toolchains (`openjdk-17-jdk`, `repo`, `ninja`, Python).
-  * **Persistent CCache (15 GB)** stored at `~/.ccache` directly on the boot disk, preserved across ROM disk re-creations and version upgrades.
-* **ROM & Recovery Storage Disks (`pd-balanced SSD`)**:
-  * **ROM/Recovery-Specific Disks**: Dedicated storage (`gcp-rom-a16-disk` [500GB] at `/mnt/a16`, `gcp-rom-a17-disk` [500GB] at `/mnt/a17`, `gcp-recovery-disk` [300GB] at `/mnt/recovery`) auto-mounted at boot by `startup.sh`.
-  * **General Shared Disk (`gcp-general-disk`, 500 GB)**: Fits GCP free-tier's 500 GB SSD limit by sharing one disk across ROM versions and Recoveries. It is **not** mounted at boot; instead, when starting a build, `gcp_menu.sh` checks for a ROM/recovery-specific disk first and falls back to `gcp-general-disk`, unmounting any other mountpoint if needed and mounting it at the target's mountpoint (`/mnt/a16`, `/mnt/a17`, or `/mnt/recovery`).
-  * **Format Disk Feature**: Wipe & reformat to clean ext4 anytime via **Disk Manager -> Format Disk**, `./gcp_menu.sh format-disk`, or pass `--format` when starting a build.
-  * Isolated workspace folders cleanly named (`/mnt/a16/evox`, `/mnt/a16/los`, `/mnt/a16/lunaris`, `/mnt/recovery/ofrp`, `/mnt/recovery/twrp`).
-  * **Zero Idle Cost**: Delete secondary disks via menu when not building to pause storage billing.
-* **Flavor-Isolated Workspace**:
-  * Each ROM and recovery compiles in its own isolated subfolder (`evox`, `los`, `lunaris`, `ofrp`, `twrp`), preventing conflicts between parallel or sequential builds.
-* **Memory & Swap**:
-  * Pure 64 GB Physical RAM mode with swap disabled by default for maximum compile throughput.
-  * On-demand swap can be created on any disk via the Swap Manager if ever needed.
+* **Compute instance (`c2d-standard-16`)**:
+  * 16 AMD EPYC Milan vCPUs, 64 GB physical RAM, `us-central1-a` by default.
+  * Compute-optimised for Clang/Soong/Ninja throughput; billing only while RUNNING.
+* **Boot disk (`30-50 GB pd-standard`)**:
+  * Ubuntu 22.04 LTS, toolchains, `repo`, Ninja, Python and a persistent ccache
+    (5 GB cap) on the boot disk.
+* **Build data disks (`pd-balanced SSD`)**:
+  * `gcp-rom-a16-disk` (500 GB) -> `/mnt/a16`
+  * `gcp-rom-a17-disk` (500 GB) -> `/mnt/a17`
+  * `gcp-recovery-disk` (300 GB) -> `/mnt/recovery`
+  * `gcp-general-disk` (500 GB) -> shared fallback for any build. Its guest
+    device name is `rom-general`; it is deliberately left unmounted at boot and
+    mounted on demand at the target mountpoint.
+  * Specific disks are preferred; the general disk is used when the specific
+    disk is missing. Recovery also falls back to an attached A16/A17 disk.
+  * Workspaces stay isolated: `/mnt/a16/evox`, `/mnt/a16/los`,
+    `/mnt/a16/lunaris`, `/mnt/recovery/ofrp`, `/mnt/recovery/twrp`.
+* **Memory & swap**:
+  * Pure 64 GB RAM mode by default.
+  * On-demand swapfiles can be created on `/mnt/a16`, `/mnt/a17`,
+    `/mnt/recovery` or the boot disk.
 
----
+### Remote execution & caching
 
-## Branch Structure
+The CLI talks to the VM through direct `ssh`/`scp` with
+`ControlMaster`/`ControlPersist`, falling back to `gcloud compute ssh` only when
+the local Google key is unavailable. VM state/IP lookups and GCP API results are
+cached for a few seconds, so menu redraws do not repeatedly hit the API.
 
-* **`main`**: Common host automation tools only:
-  * `gcp_menu.sh`: Interactive CLI menu and CLI flag dispatcher.
-  * `setup_host.sh`: Host provisioning and package installation script.
-  * `startup.sh`: VM boot daemon that auto-mounts disks and establishes symlinks.
-  * `upload.py`: Cloud uploader supporting SourceForge and Gofile.io.
-* **`aosp-16`**: Android 16 ROM build scripts (`evolution_*.sh`, `lineage_*.sh`, `lunaris_*.sh`, `clean.py`, `patch.py`).
-* **`aosp-17`**: Android 17 ROM build scripts (`evolution_*.sh`, `lineage_*.sh`, `lunaris_*.sh`, `clean.py`, `patch.py`).
-* **`recovery`**: Recovery build scripts (`ofrp_sm7125.sh`, `twrp_sm7125.sh`, `recovery_all.sh`, `clean.py`, `patch.py`).
+Builds run inside the remote `rom-build` tmux session. The runner writes
+`build.status`, `build.log` and `.gcp_build_target` at the root of the active
+mount, and deploys the 30-minute idle-shutdown systemd watchdog before launch.
 
 ---
 
 ## Quick Start
 
-### 1. Interactive Menu
-Launch the management menu:
 ```bash
-./gcp_menu.sh
+./gcp_menu.sh            # Interactive dashboard (VM selector first)
+./gcp_menu.sh setup      # First-time host provisioning on the VM
+./gcp_menu.sh upload-key # Upload ~/.ssh/crave_sf for SourceForge uploads
 ```
 
-### 2. First-Time Provisioning
-Run host provisioning to install all required dependencies, compilers, and ccache:
-```bash
-./gcp_menu.sh setup
+The startup selector discovers all VMs in the project and lets you choose the
+active build target, create a VM, delete a VM, or start/stop any VM.
+
+---
+
+## Interactive Dashboard
+
+```
+[ANDROID 16 ROM]            [DOWNLOADS TO MAC]
+ 1) Evolution X 16           11) Download ROM (.zip)
+ 2) LineageOS 16             12) Download Recovery (.img/.zip)
+ 3) Lunaris AOSP 16          13) Download Kernel (.img)
+                             14) Download Build Log (.log)
+[ANDROID 17 ROM]
+ 4) Evolution X 17          [MONITOR]
+ 5) LineageOS 17             15) Live Build Progress (tmux)
+                             16) Build Status & Error Logs
+[RECOVERY]                   17) Live System Monitor (htop/top/net)
+ 6) OrangeFox Recovery       18) Stop Active Build
+ 7) TWRP Recovery
+ 8) All Recoveries Batch    [VM]
+                             19) VM Status & Info
+[KERNEL]                     20) Start VM
+ 9) Android 16 Kernel        21) Stop VM
+10) Android 17 Kernel        22) Disk Manager
+                             23) Swap Manager
+                             24) Machine Type Switcher
+                             25) SSH Console
+
+[TOOLS]
+ 26) Setup & Tools
+ 27) Upload Links
+ 28) Switch / Manage VMs
+ q) Quit
 ```
 
-Upload your SourceForge SSH key (`~/.ssh/crave_sf`) for automated release publishing:
-```bash
-./gcp_menu.sh upload-key
-```
+Device menus mirror the original shell menu:
+* ROM: `RMX2170`, `RMX2061`, `RMX3081`, or all-devices batch.
+* Recovery: unified `sm7125` first, then each device, then the batch.
+* Kernel: Android 16/17 devices via the Evolution X ROM workspace.
+
+Interactive builds ask for the variant, SourceForge/Gofile upload and shutdown
+behaviour. Disk formatting is a CLI-only option (`--format`); the general disk
+prompts before wiping existing data when a different target is detected.
 
 ---
 
 ## Command-Line Usage
 
-You can launch builds directly with CLI arguments without entering the menu:
-
 ### Build ROM
 ```bash
-# Evolution X 16 for Realme 7 Pro (userdebug by default):
-./gcp_menu.sh build --rom evox --ver 16 --dev RMX2170
+# Defaults: evox / 16 / RMX2170 (userdebug)
+./gcp_menu.sh build
 
-# Evolution X 16 production user build with SourceForge upload:
-./gcp_menu.sh build --rom evox --ver 16 --dev RMX2170 --type user --sf
+# Evolution X 16, Realme 7 Pro, SourceForge upload
+./gcp_menu.sh build --rom evox --ver 16 --dev RMX2170 --sf
 
-# LineageOS 17 for Realme 6 Pro:
-./gcp_menu.sh build --rom los --ver 17 --dev RMX2061 --type userdebug --sf
+# LineageOS 17, Realme 6 Pro, user build
+./gcp_menu.sh build --rom los --ver 17 --dev RMX2061 --type user
 
-# Batch build all devices (RMX2061, RMX2170, RMX3081):
-./gcp_menu.sh build --rom evox --ver 16 --dev all --sf
+# All devices batch, clean disk first
+./gcp_menu.sh build --rom evox --ver 16 --dev all --format
 
-# Format the resolved disk clean before starting a build (useful when switching ROMs on gcp-general-disk):
-./gcp_menu.sh build --rom los --ver 17 --dev RMX2170 --format --sf
+# Keep the VM running after the build (default CLI behaviour is shutdown)
+./gcp_menu.sh build --rom evox --dev RMX2170 --keep-alive
 ```
 
 ### Build Recovery
 ```bash
-# OrangeFox for sm7125 (eng by default):
-./gcp_menu.sh recovery --flavor ofrp --dev sm7125 --sf
+# Defaults: ofrp / sm7125 (eng)
+./gcp_menu.sh recovery
 
-# TWRP for sm7125 with userdebug variant:
-./gcp_menu.sh recovery --flavor twrp --dev sm7125 --type userdebug --sf
+# TWRP for a single device
+./gcp_menu.sh recovery --flavor twrp --dev RMX2170 --type userdebug
 
-# Batch build both OrangeFox and TWRP (with optional clean disk format first):
-./gcp_menu.sh recovery --flavor all --sf --format
+# OrangeFox + TWRP batch for all devices
+./gcp_menu.sh recovery --flavor all --dev all --format
 ```
 
-### VM, Disk & Session Management
+### Build Kernel
 ```bash
-./gcp_menu.sh status               # Check VM running state, machine type, and attached disks
-./gcp_menu.sh format-disk general  # Format gcp-general-disk clean as ext4 (accepts disk name or a16/a17/recovery/general)
-./gcp_menu.sh create-disk general  # Create & initialize 500GB gcp-general-disk (unmounted until build)
-./gcp_menu.sh top          # Launch interactive live process & CPU monitor (htop / top)
-./gcp_menu.sh attach       # Attach to live tmux build session
-./gcp_menu.sh logs         # View recent compiler output & error scans
-./gcp_menu.sh download-log # Download latest build log (.log) directly to Mac
-./gcp_menu.sh stop-build   # Cancel/kill active compilation & tmux session
-./gcp_menu.sh start        # Start VM (with automated capacity failover)
-./gcp_menu.sh stop         # Stop VM
-./gcp_menu.sh type         # Interactive machine type switcher (ranked by price)
-./gcp_menu.sh type <type>  # Switch machine type in-place (e.g. t2d-standard-16)
-./gcp_menu.sh ssh          # Open SSH shell into VM
-./gcp_menu.sh info         # View instance specifications and billing rates
+# Defaults: Android 16 / RMX2170 / userdebug -> boot.img
+./gcp_menu.sh kernel
+
+# Android 17 kernel for Realme 8 Pro, upload, clean disk first
+./gcp_menu.sh kernel --ver 17 --dev RMX3081 --sf --format
+
+# Keep the VM online for debugging
+./gcp_menu.sh kernel --ver 16 --dev RMX2061 --keep-alive
+```
+
+The kernel build reuses the Evolution X ROM workspace and runs
+`m bootimage` after lunch, so it shares the same sync/clean/upload pipeline
+instead of a fragile standalone kernel checkout. Artifacts are discovered as
+`boot.img` and uploaded under `DEVICE/Kernel/<version>`.
+
+### Downloads
+```bash
+./gcp_menu.sh download-rom              # Interactive file picker
+./gcp_menu.sh download-recovery
+./gcp_menu.sh download-kernel
+./gcp_menu.sh download-log
+
+./gcp_menu.sh download-rom --all        # Download every matching artifact
+./gcp_menu.sh download-kernel --pick 1,3
+```
+
+ROM, recovery and kernel downloads only scan each workspace's
+`out/target/product/<device>` output tree, so unrelated archives on the data
+disks are ignored. In the interactive menu you can pick individual files
+(`1,3`), a range (`1-3`), all files (Enter/`all`), or cancel (`q`). All files
+land in `~/Downloads`. Log downloads also create a `_clean.log` copy with ANSI
+escapes and carriage returns removed.
+
+### VM, Disk, Swap & Session Management
+```bash
+./gcp_menu.sh status                  # VM state, IP, machine type, zone
+./gcp_menu.sh start | stop            # Power lifecycle with capacity failover
+./gcp_menu.sh ssh                     # Interactive SSH shell
+./gcp_menu.sh tmux | attach           # Attach to the live build session
+./gcp_menu.sh htop | top | net        # Live process / network monitor
+./gcp_menu.sh vms                     # Switch active VM
+./gcp_menu.sh links                   # Show upload links (works while stopped)
+./gcp_menu.sh info                    # Farm specifications and rates
+
+./gcp_menu.sh create-disk general 500
+./gcp_menu.sh delete-disk general
+./gcp_menu.sh attach-disk | detach-disk [name]
+./gcp_menu.sh format-disk general     # accepts a16/a17/recovery/general or full name
+./gcp_menu.sh swap                    # Interactive swap manager
+./gcp_menu.sh swap-create 16 /mnt/a16/swapfile
+./gcp_menu.sh swap-off
+
+./gcp_menu.sh logs                    # Build status dashboard
+./gcp_menu.sh log-errors              # Scan newest log for FAILED/error lines
+./gcp_menu.sh stop-build              # Kill the runner and compiler processes
+./gcp_menu.sh machine-type [type]     # Switch machine type in place
 ```
 
 ---
 
-## Machine Types & Auto-Failover Strategy
+## Machine Types & Auto-Failover
 
-Custom ROM compilation (AOSP, Kernel, Clang/LLVM, Soong, Ninja) is heavily CPU-bound and cache-sensitive. We exclusively use Google Cloud's **compute-optimized and dedicated-core architectures**:
-
-| Rank | Machine Type | CPU Architecture | Hourly Cost | Characteristics |
+| Rank | Machine Type | CPU Architecture | Hourly Cost | Notes |
 | :---: | :--- | :--- | :---: | :--- |
-| **1** | **`c2d-standard-16`** *(Default)* | AMD EPYC Milan (Compute-Opt) | **~$0.726 / hr** | **Fastest AOSP Build**: Max L3 cache per core (32MB per CCX) & 3.7 GHz boost for optimal Clang throughput. |
-| **2** | **`t2d-standard-16`** | AMD EPYC Milan (1:1 Cores) | **~$0.675 / hr** | **Cheapest 16-Core**: 16 dedicated physical cores with no SMT/hyperthreading sharing. |
-| **3** | **`c2-standard-16`** | Intel Xeon Cascade Lake | **~$0.835 / hr** | **Intel Fallback**: High sustained all-core turbo (3.8 GHz) compute pool. |
+| **1** | **`c2d-standard-16`** *(Default)* | AMD EPYC Milan (Compute-Opt) | **~$0.726 / hr** | Fastest AOSP build: large L3 cache and high boost. |
+| **2** | **`t2d-standard-16`** | AMD EPYC Milan (1:1 Cores) | **~$0.675 / hr** | Cheapest 16-core option. |
+| **3** | **`c2-standard-16`** | Intel Xeon Cascade Lake | **~$0.835 / hr** | Intel fallback pool. |
 
-### Automated In-Place Capacity Recovery
-* If Google Cloud reports a temporary cluster shortage (`ZONE_RESOURCE_POOL_EXHAUSTED`) on `c2d-standard-16`, the startup script automatically updates the VM machine type to `t2d-standard-16` in-place (in 2 seconds) and starts the VM immediately.
-* If that pool is also full, it cascades to `c2-standard-16`.
-* **Zero Disk Disruption**: Persistent disks, mountpoints, ccache, and configurations are 100% preserved.
-* **Manual Switcher**: You can view or change machine types anytime via **Option 26 (Machine Type & Failover Manager)** or `./gcp_menu.sh type`.
+If GCP reports `ZONE_RESOURCE_POOL_EXHAUSTED`, the start flow changes the
+machine type in place and retries through `c2d -> t2d -> c2`. Persistent disks,
+mountpoints, ccache and workspaces are preserved.
 
 ---
 
-## Cost Optimization & Disk Lifecycle
+## Cost Protection
 
-1. **Auto-Idle Shutdown Watchdog (30-Minute Protection)**:
-   * A persistent systemd watchdog (`idle-shutdown.service`) continuously monitors VM activity every 60 seconds.
-   * If **no build/sync processes** (`soong`, `ninja`, `ckati`, `repo`, `upload.py`, etc.) are running and **no interactive SSH sessions** are open for **30 minutes**, the VM automatically powers down (`poweroff`).
-   * **Runaway Billing Protection**: Completely eliminates unexpected compute charges (~$0.726/hr) if a build finishes, crashes, fails, or if an SSH session drops.
-   * Monitor status in real-time via **Option 18 (Check Build Status & Error Logs)** or **Option 28 (Setup & Tools) -> Option 3**.
-2. **Post-Build Auto-Shutdown**:
-   * `--shutdown` (or `--shutdown true`) powers off as soon as the build ends, whether it succeeds or fails.
-   * `--shutdown false` (also `--keep-alive`) arms a 30-minute build-idle shutdown. Any newly started build resets the timer, including when an SSH session remains open.
-3. **ROM Disk Management**:
-   * Storage is billed while disks exist in GCP (~$1.65/day for 500 GB).
-   * Use **Option 24 (Disk Manager)** -> **Detach & DELETE Disk** to remove the disk when you are done.
-   * On your next build, `gcp_menu.sh` automatically recreates, attaches, formats, and mounts a fresh disk with zero manual commands.
-4. **Artifact Uploads & Build Logs**:
-   * Releases upload directly to SourceForge (`Frs`) and/or Gofile.io.
-   * Built ROM zip(s) can be downloaded to Mac (`~/Downloads`) via **Option 14**.
-   * Recovery artifacts can be downloaded to Mac (`~/Downloads`) via **Option 15**.
-   * Active build logs (`.log`) can be downloaded to Mac (`~/Downloads`) via **Option 16** or `./gcp_menu.sh download-log`.
+1. **30-minute idle watchdog**:
+   * `idle-shutdown.service` runs `/usr/local/bin/idle_watchdog.sh` every minute.
+   * If no build processes and no interactive SSH users are active for 30
+     minutes, the VM powers off.
+   * Deploy or inspect it from **Setup & Tools -> 3**, or CLI
+     `./gcp_menu.sh watchdog`.
+2. **Post-build shutdown**:
+   * CLI builds shut down on success by default; `--keep-alive` or
+     `--shutdown false` keeps the VM running.
+   * Failed builds stay online for debugging and rely on the idle watchdog.
+3. **Disk lifecycle**:
+   * Storage is billed while disks exist. Delete unused disks from the Disk
+     Manager (option 8) or `./gcp_menu.sh delete-disk`.
+   * Missing disks are recreated/attached automatically when a build starts.
+
+---
+
+## Repository Layout
+
+```
+cli/
+  main.py             Dashboard + CLI dispatcher
+  base.py             ANSI UI helpers and terminal restoration
+  helper.py           Device/variant/upload prompts
+  builds/             ROM, recovery and kernel submenus
+  ops/                Download, monitor and upload-link menus
+  storage/            Disk and swap menus
+  tools/              Setup, authentication and SSH console menus
+  services/           VM/SSH, disk, runner, monitor, download, link,
+                      swap and tool backends
+  cluster/vm.py       VM discovery, selection, creation and deletion
+scripts/
+  build.py            Unified ROM / recovery / kernel build engine
+  clean.py            Workspace clean implementation
+  patch.py            Patch hook
+  upload.py           SourceForge / Gofile / Filebin uploader
+configs/
+  rom.json            ROM versions, devices and manifests
+  recovery.json       OrangeFox/TWRP configuration
+  kernel.json         Android 16/17 kernel configuration
+  vm_preset.json      Disk sizes, device names and VM defaults
+```
+
+Upload history is merged from `~/.gcp_upload_links.log`, the VM's
+`~/.upload_links.log` and the GCP `upload-links` metadata entry, so links remain
+visible even when the VM is stopped.

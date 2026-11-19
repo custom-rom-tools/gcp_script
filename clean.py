@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 """
-Clean, delink, and reset script for Android ROM / Recovery source trees.
-- Kills orphaned git/repo network processes from aborted syncs.
-- Cleans all stale git & repo lock files (*.lock, index.lock, HEAD.lock, etc.).
-- Cleans 0-byte corrupted .git/index files.
-- Delinks and resets manually changed repos, extracted folders (e.g. kernel/realme/sm7125),
-  symlinks, standalone clones, and manual branches/remotes in device/kernel/vendor trees.
-- Resets patched build repositories to pristine HEAD state.
-
-Can be executed directly via:
-    curl -sLf https://raw.githubusercontent.com/custom-rom-tools/gcp_script/main/clean.py | python3
+Clean and reset script for Android ROM / Recovery source trees.
+- Kills orphaned git network processes from aborted syncs.
+- Cleans stale lock files (*.lock, index.lock, HEAD.lock) and 0-byte .git/index files.
+- Removes unmanaged/manual clones (e.g. kernel/realme/sm7125 cloned via git origin).
+- Resets dirty changes and detaches HEAD on repo-managed trees so repo sync succeeds.
+- NOTE: NEVER touches out/ (intermediate build objects are 100% preserved).
 """
 
+import argparse
 import os
-import sys
 import shutil
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
-def kill_stale_git_processes():
+def kill_stale_processes() -> None:
     """Terminate lingering git network/fetch processes from aborted syncs."""
     try:
         subprocess.run(
@@ -30,579 +28,164 @@ def kill_stale_git_processes():
         pass
 
 
-def clean_locks(root_dir="."):
-    """Find and delete all stale git and repo lock files and zero-byte index files."""
-    print("=== Cleaning Stale Git & Repo Lock Files ===")
-    deleted = []
+def clean_locks(repo_root: Path) -> None:
+    """Find and remove stale git/repo lock files and zero-byte corrupted index files."""
+    print(">>> Cleaning stale git & repo lock files...")
 
-    # 1. Clean all .lock files inside .repo (safe: .repo only holds git/repo metadata)
-    repo_dir = os.path.join(root_dir, ".repo")
-    if os.path.isdir(repo_dir):
-        try:
-            res = subprocess.run(
-                ["find", repo_dir, "-type", "f", "-name", "*.lock"],
+    # 1. Clean locks inside .repo
+    repo_meta = repo_root / ".repo"
+    if repo_meta.is_dir():
+        subprocess.run(["find", str(repo_meta), "-name", "*.lock", "-delete"], capture_output=True)
+        subprocess.run(["find", str(repo_meta), "-path", "*/.git/index", "-size", "0c", "-delete"], capture_output=True)
+
+    # 2. Clean locks across source trees (excludes out/)
+    for folder in ["device", "vendor", "kernel", "hardware", "build", "bootable"]:
+        target_dir = repo_root / folder
+        if target_dir.is_dir():
+            subprocess.run(
+                ["find", str(target_dir), "-name", "index.lock", "-o", "-name", "HEAD.lock", "-o", "-name", "config.lock", "-delete"],
                 capture_output=True,
-                text=True,
             )
-            for path in res.stdout.splitlines():
-                path = path.strip()
-                if path:
-                    try:
-                        os.remove(path)
-                        deleted.append(path)
-                    except OSError:
-                        pass
-        except Exception:
-            for r, _, files in os.walk(repo_dir):
-                for f in files:
-                    if f.endswith(".lock"):
-                        fp = os.path.join(r, f)
-                        try:
-                            os.remove(fp)
-                            deleted.append(fp)
-                        except OSError:
-                            pass
-
-    # 2. Clean git lock files across the workspace (index.lock, HEAD.lock, config.lock, shallow.lock, packed-refs.lock)
-    # Excludes legitimate source lockfiles such as Cargo.lock, yarn.lock, poetry.lock.
-    try:
-        res = subprocess.run(
-            [
-                "find",
-                root_dir,
-                "-type",
-                "f",
-                "(",
-                "-name",
-                "index.lock",
-                "-o",
-                "-name",
-                "HEAD.lock",
-                "-o",
-                "-name",
-                "config.lock",
-                "-o",
-                "-name",
-                "shallow.lock",
-                "-o",
-                "-name",
-                "packed-refs.lock",
-                "-o",
-                "-path",
-                "*/.git/*",
-                "-name",
-                "*.lock",
-                ")",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        for path in res.stdout.splitlines():
-            path = path.strip()
-            if path:
-                try:
-                    os.remove(path)
-                    deleted.append(path)
-                except OSError:
-                    pass
-    except Exception:
-        git_locks = {
-            "index.lock",
-            "HEAD.lock",
-            "config.lock",
-            "shallow.lock",
-            "packed-refs.lock",
-        }
-        for r, dirs, files in os.walk(root_dir):
-            if ".repo" in r.split(os.sep):
-                continue
-            is_in_git = ".git" in r.split(os.sep)
-            for f in files:
-                if (is_in_git and f.endswith(".lock")) or (f in git_locks):
-                    fp = os.path.join(r, f)
-                    try:
-                        os.remove(fp)
-                        deleted.append(fp)
-                    except OSError:
-                        pass
-
-    # 3. Clean corrupted zero-byte .git/index files
-    try:
-        res = subprocess.run(
-            ["find", root_dir, "-type", "f", "-path", "*/.git/index", "-size", "0c"],
-            capture_output=True,
-            text=True,
-        )
-        for path in res.stdout.splitlines():
-            path = path.strip()
-            if path:
-                try:
-                    os.remove(path)
-                    deleted.append(f"{path} (0-byte corrupted index)")
-                except OSError:
-                    pass
-    except Exception:
-        pass
-
-    if deleted:
-        print(f"Removed {len(deleted)} stale lock / corrupted index file(s):")
-        for p in deleted[:15]:
-            print(f"  - {p}")
-        if len(deleted) > 15:
-            print(f"  ... and {len(deleted) - 15} more.")
-    else:
-        print("No stale lock files found.")
+            subprocess.run(
+                ["find", str(target_dir), "-path", "*/.git/index", "-size", "0c", "-delete"],
+                capture_output=True,
+            )
 
 
-def find_repo_root(start_dir="."):
-    """Find the root of the Android repo checkout by walking up from start_dir."""
-    cur = os.path.abspath(start_dir)
-    while True:
-        if os.path.isdir(os.path.join(cur, ".repo")):
-            return cur
-        parent = os.path.dirname(cur)
-        if parent == cur:
-            break
-        cur = parent
-    return os.path.abspath(start_dir)
-
-
-def parse_manifests(repo_root):
-    """
-    Parse project declarations and remotes from .repo/manifest.xml,
-    .repo/manifests/*.xml, and .repo/local_manifests/*.xml.
-    Returns:
-        projects: dict mapping relative path -> {name, remote, revision}
-        remotes: dict mapping remote name -> fetch base URL
-        all_paths: set of relative paths
-        local_projects: set of relative paths declared in local_manifests
-    """
-    repo_dir = os.path.join(repo_root, ".repo")
-    projects = {}
-    remotes = {}
-    default_remote = None
-    default_revision = None
-    local_projects = set()
-
-    manifest_files = []
-    main_mf = os.path.join(repo_dir, "manifest.xml")
-    if os.path.isfile(main_mf) or os.path.islink(main_mf):
-        manifest_files.append(main_mf)
-
-    mf_dir = os.path.join(repo_dir, "manifests")
-    if os.path.isdir(mf_dir):
-        try:
-            for f in sorted(os.listdir(mf_dir)):
-                if f.endswith(".xml"):
-                    fp = os.path.join(mf_dir, f)
-                    if fp not in manifest_files:
-                        manifest_files.append(fp)
-        except OSError:
-            pass
-
-    local_manifest_files = []
-    lm_dir = os.path.join(repo_dir, "local_manifests")
-    if os.path.isdir(lm_dir):
-        try:
-            for f in sorted(os.listdir(lm_dir)):
-                if f.endswith(".xml"):
-                    local_manifest_files.append(os.path.join(lm_dir, f))
-        except OSError:
-            pass
-    lm_file = os.path.join(repo_dir, "local_manifest.xml")
-    if os.path.isfile(lm_file):
-        local_manifest_files.append(lm_file)
-
-    manifest_files.extend(local_manifest_files)
-
-    for mf in manifest_files:
-        is_local = mf in local_manifest_files
-        try:
-            tree = ET.parse(mf)
-            root = tree.getroot()
-
-            for r in root.findall("remote"):
-                r_name = r.attrib.get("name")
-                r_fetch = r.attrib.get("fetch", "")
-                if r_name:
-                    remotes[r_name] = r_fetch
-
-            def_elem = root.find("default")
-            if def_elem is not None:
-                if "remote" in def_elem.attrib:
-                    default_remote = def_elem.attrib["remote"]
-                if "revision" in def_elem.attrib:
-                    default_revision = def_elem.attrib["revision"]
-
-            for rp in root.findall("remove-project"):
-                rp_name = rp.attrib.get("name")
-                rp_path = rp.attrib.get("path")
-                to_del = [
-                    k
-                    for k, v in projects.items()
-                    if v.get("name") == rp_name or k == rp_path
-                ]
-                for k in to_del:
-                    del projects[k]
-                    local_projects.discard(k)
-
-            for p in root.findall("project"):
-                p_name = p.attrib.get("name")
-                p_path = p.attrib.get("path") or p_name
-                p_remote = p.attrib.get("remote") or default_remote
-                p_revision = p.attrib.get("revision") or default_revision
-                if p_path:
-                    p_path = os.path.normpath(p_path)
-                    projects[p_path] = {
-                        "name": p_name,
-                        "remote": p_remote,
-                        "revision": p_revision,
-                    }
-                    if is_local:
-                        local_projects.add(p_path)
-        except Exception:
-            pass
-
-    all_paths = set(projects.keys())
-    plist = os.path.join(repo_dir, "project.list")
-    if os.path.isfile(plist):
-        try:
-            with open(plist, "r", errors="ignore") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        all_paths.add(os.path.normpath(line))
-        except Exception:
-            pass
-
-    return projects, remotes, all_paths, local_projects
-
-
-def is_repo_managed_worktree(project_dir, repo_root):
-    """
-    Check if a directory with a .git entry is managed by repo (connected to .repo/projects).
-    Returns True if it belongs to repo, False if it is a standalone manual clone or extracted folder.
-    """
-    git_entry = os.path.join(project_dir, ".git")
-    if not os.path.exists(git_entry) and not os.path.islink(git_entry):
+def is_repo_managed(repo_dir: Path, repo_root: Path) -> bool:
+    """Check if a project directory is managed by android repo tool (connected to .repo)."""
+    git_entry = repo_dir / ".git"
+    if not git_entry.exists() and not git_entry.is_symlink():
         return False
 
-    # 1. Symlinked .git pointing to .repo/projects
-    if os.path.islink(git_entry):
+    # Symlink pointing into .repo/projects
+    if git_entry.is_symlink():
         try:
-            target = os.readlink(git_entry)
-            if ".repo/projects" in target:
-                return True
+            return ".repo" in os.readlink(str(git_entry))
         except OSError:
-            pass
+            return False
 
-    # 2. Worktree pointer file (.git as file containing "gitdir: ...")
-    if os.path.isfile(git_entry):
+    # Gitfile (worktree pointer) containing gitdir: .../.repo/...
+    if git_entry.is_file():
         try:
-            with open(git_entry, "r", errors="ignore") as f:
-                content = f.read()
-                if ".repo/projects" in content:
-                    return True
+            return ".repo" in git_entry.read_text(errors="ignore")
         except Exception:
-            pass
+            return False
 
-    # 3. Regular directory .git
-    if os.path.isdir(git_entry):
-        cfg_path = os.path.join(git_entry, "config")
-        if os.path.isfile(cfg_path):
+    # Standalone .git directory: check config or matching .repo/projects directory
+    if git_entry.is_dir():
+        cfg = git_entry / "config"
+        if cfg.is_file():
             try:
-                with open(cfg_path, "r", errors="ignore") as f:
-                    cfg = f.read()
-                    if '[remote "m"]' in cfg or ".repo/projects" in cfg:
-                        return True
+                content = cfg.read_text(errors="ignore")
+                if '[remote "m"]' in content or ".repo/projects" in content:
+                    return True
             except Exception:
                 pass
-
-        obj_path = os.path.join(git_entry, "objects")
-        if os.path.islink(obj_path):
-            try:
-                if ".repo" in os.readlink(obj_path):
-                    return True
-            except OSError:
-                pass
-
-        # Check if corresponding .git exists in .repo/projects
-        rel_path = os.path.relpath(project_dir, repo_root)
-        proj_meta = os.path.join(repo_root, ".repo", "projects", rel_path + ".git")
-        if os.path.isdir(proj_meta):
+        rel = repo_dir.relative_to(repo_root)
+        if (repo_root / ".repo" / "projects" / f"{rel}.git").is_dir():
             return True
 
     return False
 
 
-def get_candidate_paths(repo_root, projects, local_projects):
-    """
-    Get candidate paths that could be manually changed, extracted, or overridden.
-    Only inspects:
-    1. Projects defined in .repo/local_manifests (device/vendor/kernel/hardware trees).
-    2. Any directory or symlink under kernel/ (depth <= 3, e.g. kernel/realme/sm7125).
-    3. Any directory or symlink under device/, vendor/, hardware/ matching device trees or OEMs.
-    """
-    candidates = set(local_projects)
+def find_target_repos(repo_root: Path) -> list[Path]:
+    """Find device, vendor, kernel, hardware repos and local_manifest paths."""
+    found: set[Path] = set()
 
-    # 1. Inspect kernel/ for extracted folders, standalone clones, or symlinks
-    kernel_root = os.path.join(repo_root, "kernel")
-    if os.path.isdir(kernel_root):
-        for r, dirs, files in os.walk(kernel_root):
-            rel = os.path.relpath(r, repo_root)
-            depth = len(rel.split(os.sep))
-            if depth <= 3:
-                if ".git" in dirs or not dirs or rel in projects:
-                    candidates.add(os.path.normpath(rel))
-            if depth >= 3 and ".git" in dirs:
-                dirs.remove(".git")
-
-    # 2. Inspect device/, vendor/, hardware/ for OEM subdirectories or symlinks
-    for top in ["device", "vendor", "hardware"]:
-        top_full = os.path.join(repo_root, top)
-        if not os.path.isdir(top_full):
-            continue
-        try:
-            for entry in os.scandir(top_full):
-                if entry.is_symlink():
-                    candidates.add(os.path.normpath(os.path.relpath(entry.path, repo_root)))
-                elif entry.is_dir():
-                    oem_dir = entry.path
-                    for sub_entry in os.scandir(oem_dir):
-                        if sub_entry.is_symlink() or sub_entry.is_dir():
-                            rel_sub = os.path.normpath(os.path.relpath(sub_entry.path, repo_root))
-                            candidates.add(rel_sub)
-        except OSError:
-            pass
-
-    # 3. Add any project from manifest that starts with kernel/ or matches local_projects
-    for p_path in projects:
-        if p_path.startswith("kernel/") or p_path in local_projects:
-            candidates.add(os.path.normpath(p_path))
-
-    return candidates
-
-
-def delink_manual_repos(root_dir="."):
-    """
-    Delink repositories with manually added URLs, manual branches, symlinks,
-    or standalone manual git clones that conflict with repo manifest.
-    Only resets repositories that are changed manually or extracted (e.g. kernel/realme/sm7125).
-    """
-    print("=== Delinking Manual Repositories & Non-Manifest URLs/Branches ===")
-    repo_root = find_repo_root(root_dir)
-    repo_dir = os.path.join(repo_root, ".repo")
-
-    if not os.path.isdir(repo_dir):
-        print("No .repo directory found; skipping repo delinking.")
-        return
-
-    projects, remotes, all_paths, local_projects = parse_manifests(repo_root)
-
-    candidate_paths = get_candidate_paths(repo_root, projects, local_projects)
-    delinked_count = 0
-
-    for rel_path in sorted(candidate_paths):
-        full_path = os.path.join(repo_root, rel_path)
-
-        # 1. Delink symlinks (e.g. manual ln -s of kernel/device)
-        if os.path.islink(full_path):
+    # 1. Projects declared in .repo/local_manifests
+    lm_dir = repo_root / ".repo" / "local_manifests"
+    if lm_dir.is_dir():
+        for xml_file in lm_dir.glob("*.xml"):
             try:
-                target = os.readlink(full_path)
-                print(f"Delinking manual symlink: {rel_path} -> {target}")
-                os.unlink(full_path)
-                delinked_count += 1
-                continue
-            except OSError as e:
-                print(f"Error removing symlink {rel_path}: {e}")
-                continue
-
-        if not os.path.exists(full_path):
-            continue
-
-        p_info = projects.get(rel_path, {})
-        manifest_proj_name = p_info.get("name")
-
-        # 2. Check if this is an unmanaged directory or standalone manual clone (not connected to .repo)
-        if os.path.isdir(full_path) and not is_repo_managed_worktree(full_path, repo_root):
-            print(
-                f"Delinking manual extracted folder / standalone clone: {rel_path}"
-            )
-            try:
-                shutil.rmtree(full_path)
-                delinked_count += 1
-            except OSError as e:
-                print(f"Error removing unmanaged folder {rel_path}: {e}")
-            continue
-
-        # 3. For repo-managed worktrees:
-        # Clean stale locks in this repository
-        for lock in ["index.lock", "HEAD.lock", "config.lock", "shallow.lock"]:
-            lp = os.path.join(full_path, ".git", lock)
-            if os.path.isfile(lp):
-                try:
-                    os.remove(lp)
-                except OSError:
-                    pass
-
-        # Check if the repository name in manifest changed (different repo is used for this path)
-        proj_cfg = os.path.join(repo_root, ".repo", "projects", rel_path + ".git", "config")
-        current_proj_name = None
-        if os.path.isfile(proj_cfg):
-            try:
-                with open(proj_cfg, "r", errors="ignore") as f:
-                    for line in f:
-                        if "projectname" in line and "=" in line:
-                            current_proj_name = line.split("=", 1)[1].strip()
-                            break
+                tree = ET.parse(xml_file)
+                for p in tree.getroot().findall("project"):
+                    path = p.attrib.get("path") or p.attrib.get("name")
+                    if path:
+                        target = repo_root / path.strip("/")
+                        if target.exists():
+                            found.add(target)
             except Exception:
                 pass
 
-        if current_proj_name and manifest_proj_name and current_proj_name != manifest_proj_name:
-            print(
-                f"Delinking old repository in {rel_path}: {current_proj_name} -> {manifest_proj_name}"
-            )
-            try:
-                shutil.rmtree(full_path)
-                proj_meta_dir = os.path.join(repo_root, ".repo", "projects", rel_path + ".git")
-                if os.path.isdir(proj_meta_dir):
-                    shutil.rmtree(proj_meta_dir)
-                delinked_count += 1
+    # 2. Inspect kernel, device, vendor, hardware (up to depth 3)
+    for category in ["kernel", "device", "vendor", "hardware"]:
+        cat_dir = repo_root / category
+        if not cat_dir.is_dir():
+            continue
+        for root, dirs, _ in os.walk(str(cat_dir)):
+            rel_parts = Path(root).relative_to(repo_root).parts
+            if len(rel_parts) > 3:
+                dirs.clear()
                 continue
-            except OSError as e:
-                print(f"Error removing old repo metadata {rel_path}: {e}")
+            git_path = Path(root) / ".git"
+            if git_path.exists() or git_path.is_symlink():
+                found.add(Path(root))
+                dirs.clear()
 
-        # A. Check and remove manual git remotes
-        res = subprocess.run(
-            ["git", "-C", full_path, "remote"],
-            capture_output=True,
-            text=True,
-        )
-        current_remotes = [
-            r.strip() for r in res.stdout.splitlines() if r.strip()
-        ]
-
-        legitimate_remotes = {"m", "origin"}
-        if p_info.get("remote"):
-            legitimate_remotes.add(p_info["remote"])
-        for r_name in remotes:
-            legitimate_remotes.add(r_name)
-
-        for cr in current_remotes:
-            if cr not in legitimate_remotes:
-                print(f"Delinking manual git remote in {rel_path}: {cr}")
-                subprocess.run(
-                    ["git", "-C", full_path, "remote", "remove", cr],
-                    capture_output=True,
-                )
-                delinked_count += 1
-
-        # B. Check for manual checked-out branch
-        res_branch = subprocess.run(
-            ["git", "-C", full_path, "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-        )
-        curr_branch = res_branch.stdout.strip()
-        had_manual_branch = False
-
-        if curr_branch and curr_branch != "HEAD":
-            print(
-                f"Delinking manual branch in {rel_path}: {curr_branch}"
-            )
-            subprocess.run(
-                ["git", "-C", full_path, "checkout", "-f", "--detach"],
-                capture_output=True,
-            )
-            had_manual_branch = True
-            delinked_count += 1
-
-        # Delete any local branch refs so repo can checkout manifest revision cleanly
-        res_branches = subprocess.run(
-            [
-                "git",
-                "-C",
-                full_path,
-                "for-each-ref",
-                "--format=%(refname:short)",
-                "refs/heads/",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        for b in res_branches.stdout.splitlines():
-            b = b.strip()
-            if b:
-                subprocess.run(
-                    ["git", "-C", full_path, "branch", "-D", b],
-                    capture_output=True,
-                )
-
-        # C. Check if dirty (manual uncommitted changes, untracked files from extracted archives)
-        res_status = subprocess.run(
-            ["git", "-C", full_path, "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-        )
-        is_dirty = bool(res_status.stdout.strip())
-
-        if is_dirty or had_manual_branch:
-            print(f"Resetting manual changes in {rel_path}")
-            subprocess.run(
-                ["git", "-C", full_path, "reset", "--hard", "HEAD"],
-                capture_output=True,
-            )
-            subprocess.run(
-                ["git", "-C", full_path, "clean", "-fdx"],
-                capture_output=True,
-            )
-            delinked_count += 1
-
-    if delinked_count > 0:
-        print(f"Delinked / reset {delinked_count} manual repo/branch/remote/symlink items.")
-    else:
-        print("All target repositories are cleanly linked to manifest.")
+    return sorted(found)
 
 
-def reset_patched_repos():
-    """Reset tracked patched repositories to clean HEAD state."""
-    print("=== Cleaning Patched Repositories ===")
-    target_dirs = [
-        ".repo/manifests",
-        ".repo/repo",
-        ".repo/local_manifests",
-        "build/soong",
-        "bootable/recovery",
-    ]
-    for gdir in target_dirs:
-        if os.path.isdir(os.path.join(gdir, ".git")):
-            for lock in ["index.lock", "HEAD.lock", "config.lock"]:
-                lp = os.path.join(gdir, ".git", lock)
-                if os.path.isfile(lp):
-                    try:
-                        os.remove(lp)
-                    except OSError:
-                        pass
-            subprocess.run(
-                ["git", "-C", gdir, "reset", "--hard", "HEAD"], capture_output=True
-            )
-            subprocess.run(
-                ["git", "-C", gdir, "clean", "-fdx"], capture_output=True
-            )
-    print("=== Cleanup Complete ===")
+def reset_manual_repos(repo_root: Path) -> None:
+    """Delink unmanaged clones and reset dirty/branch conflicts on repos before repo sync."""
+    target_repos = find_target_repos(repo_root)
+    if not target_repos:
+        return
+
+    print(f">>> Inspecting {len(target_repos)} target repositories...")
+    for repo_dir in target_repos:
+        rel = repo_dir.relative_to(repo_root)
+
+        # 1. Delink manual symlinks
+        if repo_dir.is_symlink():
+            print(f">>> Removing manual symlink: {rel}")
+            repo_dir.unlink()
+            continue
+
+        # 2. If it's a standalone manual git clone (not managed by repo), remove it
+        if not is_repo_managed(repo_dir, repo_root):
+            print(f">>> Removing manual/unmanaged clone: {rel}")
+            shutil.rmtree(repo_dir, ignore_errors=True)
+            continue
+
+        # 3. Clean locks inside repo
+        for lock in ["index.lock", "HEAD.lock", "config.lock"]:
+            lp = repo_dir / ".git" / lock
+            if lp.is_file():
+                try:
+                    lp.unlink()
+                except OSError:
+                    pass
+
+        # 4. Reset uncommitted changes, old patches, and detach HEAD
+        subprocess.run(["git", "-C", str(repo_dir), "reset", "--hard", "HEAD"], capture_output=True)
+        subprocess.run(["git", "-C", str(repo_dir), "clean", "-fdx"], capture_output=True)
+        subprocess.run(["git", "-C", str(repo_dir), "checkout", "-f", "--detach"], capture_output=True)
+
+    # Reset common patched core repositories if present
+    for core in ["build/soong", "bootable/recovery"]:
+        core_dir = repo_root / core
+        if (core_dir / ".git").exists():
+            subprocess.run(["git", "-C", str(core_dir), "reset", "--hard", "HEAD"], capture_output=True)
+            subprocess.run(["git", "-C", str(core_dir), "clean", "-fdx"], capture_output=True)
 
 
-def main():
-    root_dir = (
-        sys.argv[1]
-        if len(sys.argv) > 1 and not sys.argv[1].startswith("-")
-        else "."
-    )
-    kill_stale_git_processes()
-    clean_locks(root_dir)
-    delink_manual_repos(root_dir)
-    reset_patched_repos()
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Clean repo locks and reset manual repos")
+    parser.add_argument("path", nargs="?", default=".", help="Root directory of repo source tree")
+    parser.add_argument("--clean-trees", action="store_true", help="Clean trees flag")
+    parser.add_argument("--target", default="", help="Target type")
+    parser.add_argument("--device", "--dev", dest="device", default="", help="Device name")
+    args, _ = parser.parse_known_args()
+
+    repo_root = Path(args.path).resolve()
+    print(f"=== Starting Source Workspace Cleanup in {repo_root} ===")
+    kill_stale_processes()
+    clean_locks(repo_root)
+    reset_manual_repos(repo_root)
+    print("=== Cleanup Complete (out/ directory preserved) ===")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -76,25 +76,52 @@ if [ -z "$(git config --global user.email 2>/dev/null)" ]; then
 fi
 git config --global color.ui auto
 
-# Persistent ccache on the boot disk.  Keep the cap small: the boot disk
-# also holds the OS and apt cache, and if it fills up cloud-init can no
-# longer inject SSH keys at boot.  Build outputs live on the data disk.
+# Persistent ccache on the boot disk (enforced 15 GB cap, system-wide)
 mkdir -p "$HOME/.ccache"
-ccache -M 5G
+ccache -M 15G
+ccache -o max_size=15G
 ccache -o compression=true
 
-# Add environment variables to bashrc
-if ! grep -q "USE_CCACHE" "$HOME/.bashrc"; then
+# Enforce in ~/.ccache/ccache.conf
+cat << 'EOF' > "$HOME/.ccache/ccache.conf"
+max_size = 15.0G
+compression = true
+EOF
+
+# Enforce OS-level default in /etc/ccache.conf
+sudo mkdir -p /etc
+sudo tee /etc/ccache.conf > /dev/null << 'EOF'
+max_size = 15.0G
+compression = true
+EOF
+
+# Enforce system-wide in /etc/profile.d/ccache.sh (no override allowed)
+sudo tee /etc/profile.d/ccache.sh > /dev/null << 'EOF'
+export CCACHE_DIR="${HOME}/.ccache"
+export CCACHE_MAXSIZE="15G"
+readonly CCACHE_MAXSIZE
+export USE_CCACHE=1
+export CCACHE_EXEC="$(which ccache 2>/dev/null || echo /usr/bin/ccache)"
+export PATH="/usr/lib/ccache:${PATH}"
+EOF
+sudo chmod 644 /etc/profile.d/ccache.sh
+
+# Update environment variables in ~/.bashrc (no override allowed)
+sed -i '/# Android Build Environment (CCache on Boot Disk)/,/ANDROID_JACK_VM_ARGS/d' "$HOME/.bashrc" 2>/dev/null || true
+sed -i '/USE_CCACHE/d' "$HOME/.bashrc" 2>/dev/null || true
+sed -i '/CCACHE_MAXSIZE/d' "$HOME/.bashrc" 2>/dev/null || true
+
 cat << 'EOF' >> "$HOME/.bashrc"
 
-# Android Build Environment (CCache on Boot Disk)
+# Android Build Environment (CCache on Boot Disk - 15GB cap enforced)
 export USE_CCACHE=1
 export CCACHE_DIR="$HOME/.ccache"
-export CCACHE_EXEC="$(which ccache)"
+export CCACHE_EXEC="$(which ccache 2>/dev/null || echo /usr/bin/ccache)"
+export CCACHE_MAXSIZE="15G"
+readonly CCACHE_MAXSIZE
 export PATH="/usr/lib/ccache:$PATH"
 export ANDROID_JACK_VM_ARGS="-Dfile.encoding=UTF-8 -XX:+TieredCompilation -Xmx4G"
 EOF
-fi
 
 # Ensure user SSH directory exists with safe permissions
 mkdir -p "$HOME/.ssh"
