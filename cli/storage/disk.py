@@ -9,8 +9,8 @@ from cli.base import (
 )
 from cli.services.disk import (
     DISK_PRESETS, print_disk_tables, create_and_attach_disk,
-    attach_disk_action, detach_disk_action, format_disk_action,
-    delete_disk_action,
+    attach_disk_action, detach_disk_action, mount_disk_action,
+    format_disk_action, delete_disk_action,
 )
 from cli.services.vm import is_vm_running, vm_exec
 
@@ -35,20 +35,21 @@ def submenu_disk_manager(vm: dict):
         print(f"  {GREEN}4){NC} Create Recovery Disk "
               f"({rec['size_gb']}GB - dedicated /mnt/recovery)")
         print()
-        print(f" {BOLD}[ATTACH / DETACH / FORMAT]{NC}")
+        print(f" {BOLD}[ATTACH / DETACH / MOUNT / FORMAT]{NC}")
         print(f"  {BLUE}5){NC} Attach Disk")
         print(f"  {YELLOW}6){NC} Detach Disk")
-        print(f"  {RED}7){NC} Format Disk (Clean ext4 wipe)")
+        print(f"  {GREEN}7){NC} Mount Disk")
+        print(f"  {RED}8){NC} Format Disk (Clean ext4 wipe)")
         print()
         print(f" {BOLD}[DELETE - STOP BILLING]{NC}")
-        print(f"  {RED}8){NC} Delete Disk Permanently")
+        print(f"  {RED}9){NC} Delete Disk Permanently")
         print()
         print(f" {BOLD}[INFO]{NC}")
-        print(f"  {CYAN}9){NC} Check Disk Space & Mounts")
+        print(f"  {CYAN}10){NC} Check Disk Space & Mounts")
         print(f"  {BOLD}0){NC} Back to Main Menu")
         print_divider()
 
-        choice = read_input(" Select option [0-9]: ").strip().lower()
+        choice = read_input(" Select option [0-10]: ").strip().lower()
         if choice in ("0", "q", ""):
             return
         if choice == "1":
@@ -74,12 +75,15 @@ def submenu_disk_manager(vm: dict):
             detach_disk_action(vm)
             pause()
         elif choice == "7":
-            format_disk_action(vm)
+            mount_disk_action(vm)
             pause()
         elif choice == "8":
-            delete_disk_action(vm)
+            format_disk_action(vm)
             pause()
         elif choice == "9":
+            delete_disk_action(vm)
+            pause()
+        elif choice == "10":
             if not is_vm_running(vm):
                 print(">>> VM is powered OFF. Start it to inspect live disk space and mounts.")
                 pause()

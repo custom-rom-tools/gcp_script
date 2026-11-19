@@ -180,7 +180,9 @@ def run_build_dashboard(vm: dict):
         elif choice == "27":
             link.submenu_view_links(vm)
         elif choice == "28":
-            vm = run_cluster_menu()
+            new_vm = run_cluster_menu()
+            if new_vm and new_vm.get("instance"):
+                vm = new_vm
         else:
             print(f"{RED}Invalid choice.{NC}")
             base.pause()
@@ -320,7 +322,8 @@ def main():
     """Entrypoint for both the interactive menu and headless CLI flags."""
     if len(sys.argv) == 1:
         active_vm = run_cluster_menu()
-        run_build_dashboard(active_vm)
+        if active_vm and active_vm.get("instance"):
+            run_build_dashboard(active_vm)
         return
 
     if sys.argv[1].lower() in ("-h", "--help", "help"):
@@ -332,7 +335,8 @@ def main():
 
     if command in ("cluster", "menu-cluster", "vms", "switch-vm", "select-vm"):
         chosen = run_cluster_menu()
-        print(f">>> Active VM: {chosen['instance']} {chosen['zone']}")
+        if chosen and chosen.get("instance"):
+            print(f">>> Selected VM: {chosen['instance']} {chosen['zone']}")
 
     elif command in ("build", "build-rom"):
         _cli_build(vm)
@@ -401,13 +405,16 @@ def main():
         from cli.services.disk import delete_disk_action
         delete_disk_action(vm, sys.argv[2] if len(sys.argv) > 2 else "")
 
-    elif command in ("attach-disk", "detach-disk"):
-        from cli.services.disk import attach_disk_action, detach_disk_action
+    elif command in ("attach-disk", "detach-disk", "mount-disk", "mount"):
+        from cli.services.disk import attach_disk_action, detach_disk_action, mount_disk_action
         target = sys.argv[2] if len(sys.argv) > 2 else ""
         if command == "attach-disk":
             attach_disk_action(vm, target)
-        else:
+        elif command == "detach-disk":
             detach_disk_action(vm, target)
+        else:
+            mp = sys.argv[3] if len(sys.argv) > 3 else ""
+            mount_disk_action(vm, target, mp)
 
     elif command in ("swap", "swap-menu"):
         swap.submenu_swap_manager(vm)

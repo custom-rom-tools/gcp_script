@@ -20,10 +20,10 @@ from cli.services.vm import (
 
 
 def submenu_select_vm(vms: list[dict], project: str) -> dict | None:
-    """Submenu 1: List and select an active target VM from available instances."""
+    """Submenu 1: List and select a build VM from available instances."""
     clear_screen()
     print_divider()
-    print(f"{BOLD}                SELECT ACTIVE TARGET VM                          {NC}")
+    print(f"{BOLD}                     SELECT BUILD VM                             {NC}")
     print_divider()
 
     if not vms:
@@ -31,23 +31,38 @@ def submenu_select_vm(vms: list[dict], project: str) -> dict | None:
         pause()
         return None
 
-    print(f" Choose an instance to set as active build target:\n")
-    for idx, v in enumerate(vms, 1):
-        status_color = GREEN if v["status"] == "RUNNING" else RED
-        print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {status_color}{v['status']}{NC} IP: {v['ip']:<15}")
-        print(f"       Disks: {CYAN}{', '.join(v['disks'])}{NC}")
+    online_vms = [v for v in vms if v["status"] == "RUNNING"]
+    offline_vms = [v for v in vms if v["status"] != "RUNNING"]
+    all_vms = online_vms + offline_vms
+
+    print(f" Choose an instance to manage / build on:\n")
+    if online_vms:
+        print(f" {GREEN}{BOLD}Online VMs:{NC}")
+        for idx, v in enumerate(online_vms, 1):
+            ip_str = f"IP: {v.get('ip', 'None')}"
+            disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
+            print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {GREEN}{v['status']}{NC} {ip_str}")
+            print(f"       {CYAN}{disks_str}{NC}")
+
+    if offline_vms:
+        start_idx = len(online_vms) + 1
+        print(f"\n {RED}{BOLD}Offline VMs:{NC}")
+        for idx, v in enumerate(offline_vms, start_idx):
+            disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
+            print(f"   {YELLOW}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {RED}{v['status']}{NC}")
+            print(f"       {CYAN}{disks_str}{NC}")
 
     print(f"\n   {RED}0){NC} Cancel")
     print_divider()
 
-    choice = read_input(f" Select VM 1-{len(vms)} or 0: ").strip()
+    choice = read_input(f" Select VM 1-{len(all_vms)} or 0: ").strip()
     try:
         c_idx = int(choice)
-        if 1 <= c_idx <= len(vms):
-            selected = vms[c_idx - 1]
+        if 1 <= c_idx <= len(all_vms):
+            selected = all_vms[c_idx - 1]
             save_active_vm(selected["name"], selected["zone"], project,
                            selected["general_disk"], selected.get("machine_type", ""))
-            print(f"\n{GREEN}>>> Active VM: {BOLD}{selected['name']}{NC} {selected['zone']}{NC}")
+            print(f"\n{GREEN}>>> Selected VM: {BOLD}{selected['name']}{NC} ({selected['zone']}){NC}")
             time.sleep(1)
             return {
                 "instance": selected["name"],
@@ -149,10 +164,9 @@ def submenu_delete_vm(vms: list[dict], project: str) -> bool:
         return False
 
     print(" Available VMs to delete:\n")
-    cur_vm = get_active_vm()
     for idx, v in enumerate(vms, 1):
-        is_act = f" {YELLOW}ACTIVE{NC}" if v["name"] == cur_vm.get("instance") else ""
-        print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']}{NC} {v['zone']}{is_act}")
+        status_color = GREEN if v["status"] == "RUNNING" else RED
+        print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {status_color}{v['status']}{NC}")
         print(f"      Attached disks: {CYAN}{', '.join(v['disks'])}{NC}")
 
     print(f"\n   {RED}0){NC} Cancel")
@@ -240,13 +254,18 @@ def submenu_delete_vm(vms: list[dict], project: str) -> bool:
         project=project
     )
     if deleted:
-        if target_name == cur_vm.get("instance"):
-            remaining = [v for v in discover_instances(project) if v["name"] != target_name]
-            if remaining:
-                save_active_vm(remaining[0]["name"], remaining[0]["zone"], project,
-                               remaining[0]["general_disk"], remaining[0].get("machine_type", ""))
-            else:
-                save_active_vm("", "", project, "gcp-general-disk", "")
+        remaining = [v for v in discover_instances(project) if v["name"] != target_name]
+        if remaining:
+            save_active_vm(remaining[0]["name"], remaining[0]["zone"], project,
+                           remaining[0]["general_disk"], remaining[0].get("machine_type", ""))
+        else:
+            save_active_vm("", "", project, "gcp-general-disk", "")
+            from cli.services.vm import ACTIVE_VM_FILE
+            if ACTIVE_VM_FILE.is_file():
+                try:
+                    ACTIVE_VM_FILE.unlink()
+                except OSError:
+                    pass
         print(f"\n{GREEN}>>> VM '{target_name}' and selected disks have been permanently deleted.{NC}")
         pause()
         return True
@@ -257,12 +276,23 @@ def submenu_delete_vm(vms: list[dict], project: str) -> bool:
 def submenu_toggle_power(vms: list[dict], project: str):
     """Submenu 4: Toggle Start / Stop directly on any VM."""
     clear_screen()
-    print("\nToggle Power:")
+    print_divider()
+    print(f"{BOLD}                   START OR STOP A BUILD VM                      {NC}")
+    print_divider()
+    if not vms:
+        print(f"\n   {YELLOW}No VMs found in project {project}.{NC}")
+        pause()
+        return
+
+    print(" Select VM to toggle power:\n")
     for idx, v in enumerate(vms, 1):
         status_color = GREEN if v["status"] == "RUNNING" else RED
-        print(f"   {idx}) {v['name']} {status_color}{v['status']}{NC}")
+        action_hint = f"{RED}[Will Stop]{NC}" if v["status"] == "RUNNING" else f"{GREEN}[Will Start]{NC}"
+        print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {status_color}{v['status']:<10}{NC} {action_hint}")
 
-    pwr_num = read_input(f" Enter VM number 1-{len(vms)}: ").strip()
+    print(f"\n   {RED}0){NC} Cancel")
+    print_divider()
+    pwr_num = read_input(f" Enter VM number 1-{len(vms)} or 0: ").strip()
     if pwr_num.isdigit() and 1 <= int(pwr_num) <= len(vms):
         target_v = vms[int(pwr_num) - 1]
         target_dict = {
@@ -292,21 +322,35 @@ def run_cluster_menu() -> dict:
         print_divider()
         print(f"{BOLD}             GCP BUILD CLUSTER - VM SELECTOR & MANAGER           {NC}")
         print_divider()
-        print(f" Active VM: {GREEN}{vm['instance']}{NC} | Zone: {CYAN}{vm['zone']}{NC}")
-        print(f" Disk: {BLUE}{vm['general_disk']}{NC}")
-        print_thin_divider()
-        print(f" Build VMs:\n")
+
+        online_vms = [v for v in vms if v["status"] == "RUNNING"]
+        offline_vms = [v for v in vms if v["status"] != "RUNNING"]
 
         if count == 0:
-            print(f"   {YELLOW}(No VMs currently found in project {project}){NC}")
+            print(f" Build VMs:\n")
+            print(f"   {YELLOW}(No VMs currently found in project {project}){NC}\n")
         else:
-            for idx, v in enumerate(vms, 1):
-                status_color = GREEN if v["status"] == "RUNNING" else RED
-                active_marker = f"  {YELLOW}◄ ACTIVE TARGET{NC}" if v["name"] == vm["instance"] else ""
-                print(f"   {idx}) {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {status_color}{v['status']}{NC}{active_marker}")
-                print(f"       Disks: {CYAN}{', '.join(v['disks'])}{NC}")
+            print(f" {GREEN}{BOLD}Online VMs ({len(online_vms)}):{NC}")
+            if not online_vms:
+                print(f"   {YELLOW}(No VMs currently online){NC}")
+            else:
+                for v in online_vms:
+                    ip_str = f"IP: {v.get('ip', 'None')}"
+                    disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
+                    print(f"   {GREEN}•{NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {GREEN}{v['status']:<9}{NC} {ip_str}")
+                    print(f"     {CYAN}{disks_str}{NC}")
 
-        print(f"\n{CYAN}-----------------------------------------------------------------{NC}")
+            print(f"\n {RED}{BOLD}Offline VMs ({len(offline_vms)}):{NC}")
+            if not offline_vms:
+                print(f"   {YELLOW}(No VMs currently offline){NC}")
+            else:
+                for v in offline_vms:
+                    disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
+                    print(f"   {RED}•{NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {RED}{v['status']:<9}{NC}")
+                    print(f"     {CYAN}{disks_str}{NC}")
+            print()
+
+        print_thin_divider()
         print(f" Actions:")
         print(f" {GREEN}1){NC} Select VM")
         print(f" {CYAN}2){NC} Create VM")
@@ -322,7 +366,24 @@ def run_cluster_menu() -> dict:
         choice = read_input(" Select 1-6, 0 or q: ").strip().lower()
 
         if choice in ("", "0"):
-            return vm
+            if count == 0:
+                print(f"\n{YELLOW}⚠️  No VMs found in project '{project}'. Please create a VM first (Option 2).{NC}")
+                pause()
+                continue
+            # Pick a valid VM from discovered instances
+            valid_vm = None
+            if vm.get("instance"):
+                valid_vm = next((v for v in vms if v["name"] == vm["instance"]), None)
+            if not valid_vm:
+                valid_vm = next((v for v in vms if v["status"] == "RUNNING"), vms[0])
+                save_active_vm(valid_vm["name"], valid_vm["zone"], project,
+                               valid_vm["general_disk"], valid_vm.get("machine_type", ""))
+            return {
+                "instance": valid_vm["name"],
+                "zone": valid_vm["zone"],
+                "project": project,
+                "general_disk": valid_vm["general_disk"],
+            }
         elif choice in ("q", "quit", "exit"):
             print("\nGoodbye!")
             sys.exit(0)

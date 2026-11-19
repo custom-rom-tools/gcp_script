@@ -13,7 +13,7 @@ import re
 import shlex
 from pathlib import Path
 
-from cli.base import CYAN, GREEN, YELLOW, RED, BOLD, NC, read_input
+from cli.base import CYAN, GREEN, YELLOW, RED, BLUE, BOLD, NC, read_input, print_divider
 from cli.services.vm import (
     run_gcloud, vm_exec, is_vm_running, get_vm_info,
     start_vm_with_failover, ensure_vm_online,
@@ -368,12 +368,12 @@ def mount_disk_on_vm(vm: dict, target_disk: str, mount_point: str) -> bool:
 if ! sudo blkid "$REAL_DEV" 2>/dev/null | grep -q 'TYPE="ext4"'; then
     sudo mkfs.ext4 -F -m 1 -E lazy_itable_init=0,lazy_journal_init=0 "$REAL_DEV"
 fi
-while IFS= read -r omp; do
+for omp in $(findmnt -rn -S "$REAL_DEV" -o TARGET 2>/dev/null || true); do
     if [ -n "$omp" ] && [ "$omp" != {mp} ]; then
         sudo swapoff "${{omp}}/swapfile" 2>/dev/null || true
         sudo umount "$omp" 2>/dev/null || sudo umount -l "$omp" 2>/dev/null || true
     fi
-done < <(findmnt -rn -S "$REAL_DEV" -o TARGET 2>/dev/null || true)
+done
 if [ -L {mp} ]; then sudo rm -f {mp}; fi
 sudo mkdir -p {mp}
 if mountpoint -q {mp}; then
@@ -416,12 +416,12 @@ for c in '/dev/disk/by-id/google-{actual_dev}' '/dev/disk/by-id/google-{meta['de
 done
 if [ -n "$DEV" ]; then
     REAL_DEV=$(readlink -f "$DEV")
-    while IFS= read -r omp; do
+    for omp in $(findmnt -rn -S "$REAL_DEV" -o TARGET 2>/dev/null || true); do
         [ -z "$omp" ] && continue
         sudo swapoff "${{omp}}/swapfile" 2>/dev/null || true
         sudo umount "$omp" 2>/dev/null || sudo umount -l "$omp" 2>/dev/null || true
         sudo sed -i "\\|$omp|d" /etc/fstab 2>/dev/null || true
-    done < <(findmnt -rn -S "$REAL_DEV" -o TARGET 2>/dev/null || true)
+    done
 elif mountpoint -q '{fallback_mp}' 2>/dev/null; then
     sudo swapoff '{fallback_mp}/swapfile' 2>/dev/null || true
     sudo umount -l '{fallback_mp}' 2>/dev/null || true
@@ -645,6 +645,70 @@ def detach_disk_action(vm: dict, target_disk: str = "") -> bool:
         return False
     print(f">>> Disk {disk_name} detached successfully!")
     return True
+
+
+def mount_disk_action(vm: dict, target_disk: str = "", mount_point: str = "") -> bool:
+    """Interactively mount an attached secondary disk to a specified mount point."""
+    if not is_vm_running(vm):
+        print(f"\n{YELLOW}>>> VM '{vm['instance']}' is powered OFF.{NC}")
+        print("    Please start the VM first to mount disks.")
+        return False
+
+    attached = _secondary_disks(vm)
+    if not attached:
+        print(f"\n{YELLOW}>>> No attached secondary disks found on '{vm['instance']}'.{NC}")
+        print("    Attach a disk first (Option 5).")
+        return False
+
+    usage = get_mount_info(vm)
+
+    if not target_disk:
+        print_divider()
+        print(f"{BOLD}                   MOUNT ATTACHED DISK                           {NC}")
+        print_divider()
+        print(" Attached secondary disks:\n")
+        for idx, d in enumerate(attached, 1):
+            d_name = d["name"]
+            dev = d.get("device_name", "")
+            meta = get_disk_meta(d_name, vm)
+            info = usage.get(dev, {})
+            mp = info.get("mount_point", "")
+            if mp and mp != "(unmounted)":
+                status = f"{GREEN}Mounted at {mp}{NC} (Used: {info.get('used', '-')}, Free: {info.get('free', '-')})"
+            else:
+                sugg = meta.get("default_mount") or "/mnt/a16"
+                status = f"{YELLOW}Not mounted{NC} (Suggested: {sugg})"
+            print(f"   {GREEN}{idx}){NC} {BOLD}{d_name:<20}{NC} [{dev}] - {status}")
+
+        print(f"\n   {RED}0){NC} Cancel")
+        print_divider()
+
+        sel = read_input(f" Select disk 1-{len(attached)} or 0: ").strip()
+        try:
+            s_idx = int(sel)
+            if s_idx == 0:
+                return False
+            if 1 <= s_idx <= len(attached):
+                target_disk = attached[s_idx - 1]["name"]
+            else:
+                print(f"{RED}Invalid selection.{NC}")
+                return False
+        except ValueError:
+            return False
+
+    meta = get_disk_meta(target_disk, vm)
+    default_mp = meta.get("default_mount") or "/mnt/a16"
+    if not mount_point:
+        mp_input = read_input(f"\nEnter mount point [{default_mp}]: ").strip()
+        mount_point = mp_input or default_mp
+
+    print(f"\n>>> Mounting {BOLD}{target_disk}{NC} to {BOLD}{mount_point}{NC} on VM '{vm['instance']}'...")
+    if mount_disk_on_vm(vm, target_disk, mount_point):
+        print(f"{GREEN}✔ Successfully mounted {target_disk} at {mount_point}!{NC}")
+        return True
+    else:
+        print(f"{RED}✖ Failed to mount {target_disk} at {mount_point}.{NC}")
+        return False
 
 
 # ---------------------------------------------------------------------------

@@ -289,6 +289,8 @@ def get_active_vm() -> dict:
             "machine_type": env_machine,
         }
 
+    instances = discover_instances(project)
+
     saved: dict[str, str] = {}
     if ACTIVE_VM_FILE.is_file():
         try:
@@ -302,17 +304,19 @@ def get_active_vm() -> dict:
         except OSError:
             pass
 
-    if saved.get("instance") and saved.get("zone"):
-        return {
-            "instance": saved["instance"],
-            "zone": saved["zone"],
-            "project": saved.get("project") or project,
-            "general_disk": saved.get("general_disk") or DEFAULT_GENERAL_DISK,
-            "machine_type": saved.get("machine_type", ""),
-        }
-
-    instances = discover_instances(project)
+    # If instances exist in the project, validate saved instance against real instances
     if instances:
+        if saved.get("instance"):
+            match = next((v for v in instances if v["name"] == saved["instance"]), None)
+            if match:
+                return {
+                    "instance": match["name"],
+                    "zone": match["zone"],
+                    "project": match.get("project") or project,
+                    "general_disk": match.get("general_disk") or DEFAULT_GENERAL_DISK,
+                    "machine_type": match.get("machine_type", ""),
+                }
+        # Fallback to first RUNNING instance, or first instance
         chosen = next((v for v in instances if v["status"] == "RUNNING"), instances[0])
         save_active_vm(chosen["name"], chosen["zone"], chosen["project"], chosen["general_disk"],
                        chosen.get("machine_type", ""))
@@ -324,8 +328,15 @@ def get_active_vm() -> dict:
             "machine_type": chosen.get("machine_type", ""),
         }
 
+    # No instances found in project: clean up stale cache
+    if ACTIVE_VM_FILE.is_file():
+        try:
+            ACTIVE_VM_FILE.unlink()
+        except OSError:
+            pass
+
     return {
-        "instance": "rom-build-farm",
+        "instance": "",
         "zone": DEFAULT_ZONE,
         "project": project,
         "general_disk": DEFAULT_GENERAL_DISK,
@@ -337,6 +348,14 @@ def save_active_vm(instance: str, zone: str, project: str,
                    general_disk: str = DEFAULT_GENERAL_DISK,
                    machine_type: str = "") -> None:
     """Persist the active target VM to ~/.gcp_active_vm."""
+    if not instance:
+        if ACTIVE_VM_FILE.is_file():
+            try:
+                ACTIVE_VM_FILE.unlink()
+            except OSError:
+                pass
+        return
+
     lines = [
         f"INSTANCE='{instance}'",
         f"ZONE='{zone}'",
