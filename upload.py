@@ -106,6 +106,11 @@ def find_companions(artifact: Path) -> list[Path]:
     name = artifact.name
     stem = artifact.stem
 
+    has_sha = any(
+        (parent / f"{name}{ext}").is_file() and (parent / f"{name}{ext}").stat().st_size > 0
+        for ext in [".sha256sum", ".sha256"]
+    )
+
     for cand in sorted(parent.iterdir()):
         if not cand.is_file() or cand.stat().st_size == 0 or cand == artifact:
             continue
@@ -129,6 +134,10 @@ def find_companions(artifact: Path) -> list[Path]:
             is_match = True
 
         if not is_match:
+            continue
+
+        # If sha256sum exists, do not include md5 companion
+        if has_sha and cand_suffix in [".md5sum", ".md5"]:
             continue
 
         match cand_suffix:
@@ -322,11 +331,17 @@ def generate_sha256sum(file_path: Path) -> Path | None:
 
 
 def generate_md5sum(file_path: Path) -> Path | None:
-    """Generate <file_path>.md5sum companion if not already present."""
+    """Generate <file_path>.md5sum companion only if no sha256sum exists and not already present."""
     if not file_path.is_file() or file_path.stat().st_size == 0:
         return None
     if file_path.suffix.lower() in [".sha256sum", ".sha256", ".md5sum", ".md5", ".json", ".txt"]:
         return None
+
+    # If a sha256sum companion exists or is generated, do NOT generate md5sum
+    for ext in [".sha256sum", ".sha256"]:
+        sha_file = file_path.with_name(f"{file_path.name}{ext}")
+        if sha_file.exists() and sha_file.stat().st_size > 0:
+            return None
 
     for ext in [".md5sum", ".md5"]:
         existing = file_path.with_name(f"{file_path.name}{ext}")
@@ -513,9 +528,10 @@ def resolve_artifacts(raw_inputs: list[str], build_type: str = "rom", remote_sub
                     sha_comp = generate_sha256sum(cand)
                     if sha_comp and sha_comp.is_file() and sha_comp not in targets:
                         targets.append(sha_comp)
-                    md5_comp = generate_md5sum(cand)
-                    if md5_comp and md5_comp.is_file() and md5_comp not in targets:
-                        targets.append(md5_comp)
+                    if not sha_comp:
+                        md5_comp = generate_md5sum(cand)
+                        if md5_comp and md5_comp.is_file() and md5_comp not in targets:
+                            targets.append(md5_comp)
                     for comp in find_companions(cand):
                         if comp.is_file() and comp not in targets:
                             targets.append(comp)
@@ -532,9 +548,10 @@ def resolve_artifacts(raw_inputs: list[str], build_type: str = "rom", remote_sub
             sha_comp = generate_sha256sum(p)
             if sha_comp and sha_comp.is_file() and sha_comp not in targets:
                 targets.append(sha_comp)
-            md5_comp = generate_md5sum(p)
-            if md5_comp and md5_comp.is_file() and md5_comp not in targets:
-                targets.append(md5_comp)
+            if not sha_comp:
+                md5_comp = generate_md5sum(p)
+                if md5_comp and md5_comp.is_file() and md5_comp not in targets:
+                    targets.append(md5_comp)
             for comp in find_companions(p):
                 if comp.is_file() and comp not in targets:
                     targets.append(comp)
