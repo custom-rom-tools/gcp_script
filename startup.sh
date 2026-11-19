@@ -238,11 +238,11 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
 EOF_NETSPEED
 chmod +x /usr/local/bin/vm_net_speed.sh
 
-if ! grep -q "GCP-TMUX-STYLE-V8" /etc/tmux.conf 2>/dev/null; then
+if ! grep -q "GCP-TMUX-STYLE-V9" /etc/tmux.conf 2>/dev/null; then
   sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   cat << 'EOF_TMUX' >> /etc/tmux.conf
 
-# GCP-TMUX-STYLE-V8: high-contrast dark footer, CPU/RAM/Net monitor, mouse scrolling, 50k scrollback, shortcuts
+# GCP-TMUX-STYLE-V9: high-contrast dark footer, CPU/RAM/Net monitor, dynamic build pills & shortcuts
 set -g mouse on
 set -g set-clipboard on
 bind-key m set-option -g mouse
@@ -253,10 +253,10 @@ bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 set -g history-limit 50000
 set -g status-interval 2
 set -g status-style "bg=colour235,fg=colour252"
-set -g status-left-length 30
-set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_label,#{@build_label},BUILD} #[bg=colour235,fg=colour39] "
-set -g window-status-style "bg=colour235,fg=colour245"
-set -g window-status-current-style "bg=colour238,fg=colour255,bold"
+set -g status-left-length 60
+set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_icon,#{@build_icon},⚙} #{?@build_label,#{@build_label},BUILD} #[bg=colour238,fg=colour255,bold] #{?@build_detail,#{@build_detail},#W} #[bg=colour235] "
+set -g window-status-current-format ""
+set -g window-status-format ""
 set -g status-right-length 160
 set -g status-right "#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 EOF_TMUX

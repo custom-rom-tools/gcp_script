@@ -107,7 +107,7 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
 """
 
 TMUX_CONF = r"""
-# GCP-TMUX-STYLE-V7: high-contrast dark footer, mouse-wheel scrolling, 50k scrollback, build label & DL/UL speed
+# GCP-TMUX-STYLE-V9: high-contrast dark footer, CPU/RAM/Net monitor, dynamic build pills & shortcuts
 set -g mouse on
 set -g set-clipboard on
 bind-key m set-option -g mouse
@@ -118,13 +118,29 @@ bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 set -g history-limit 50000
 set -g status-interval 2
 set -g status-style "bg=colour235,fg=colour252"
-set -g status-left-length 30
-set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_label,#{@build_label},BUILD} #[bg=colour235,fg=colour39] "
-set -g window-status-style "bg=colour235,fg=colour245"
-set -g window-status-current-style "bg=colour238,fg=colour255,bold"
+set -g status-left-length 60
+set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_icon,#{@build_icon},⚙} #{?@build_label,#{@build_label},BUILD} #[bg=colour238,fg=colour255,bold] #{?@build_detail,#{@build_detail},#W} #[bg=colour235] "
+set -g window-status-current-format ""
+set -g window-status-format ""
 set -g status-right-length 160
 set -g status-right "#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 """
+
+
+def _format_display_name(name: str) -> str:
+    n = name.strip()
+    low = n.lower()
+    if low in ("evolution", "evolutionx", "evox"):
+        return "Evolution X"
+    if low in ("lineage", "lineageos", "los"):
+        return "LineageOS"
+    if low in ("crdroid", "cr"):
+        return "crDroid"
+    if low in ("pixel", "pixelos"):
+        return "PixelOS"
+    if low in ("aosp", "arrow", "derp", "paranoid"):
+        return n.title()
+    return n.title() if n.islower() else n
 
 
 def load_kernel_config() -> dict:
@@ -141,7 +157,7 @@ def net_speed_setup_cmd() -> str:
     return f"""if ! grep -q 'GCP-NET-SPEED-V3' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '{net_b64}' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V8' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V9' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '{tmux_b64}' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
@@ -156,20 +172,22 @@ tmux bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel 2
 tmux set-option -g history-limit 50000 2>/dev/null || true
 tmux set-option -g status-interval 2 2>/dev/null || true
 tmux set-option -g status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
-tmux set-option -g status-left-length 30 2>/dev/null || true
-tmux set-option -g status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour235,fg=colour39] ' 2>/dev/null || true
-tmux set-window-option -g window-status-style 'bg=colour235,fg=colour245' 2>/dev/null || true
-tmux set-window-option -g window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
+tmux set-option -g status-left-length 60 2>/dev/null || true
+tmux set-option -g status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_icon,#{{@build_icon}},⚙}} #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour238,fg=colour255,bold] #{{?@build_detail,#{{@build_detail}},#W}} #[bg=colour235] ' 2>/dev/null || true
+tmux set-window-option -g window-status-current-format '' 2>/dev/null || true
+tmux set-window-option -g window-status-format '' 2>/dev/null || true
 tmux set-option -g status-right-length 160 2>/dev/null || true
 tmux set-option -g status-right '#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 tmux set-option -u -t rom-build mouse 2>/dev/null || true
 tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
 tmux set-option -t rom-build status-interval 2 2>/dev/null || true
 tmux set-option -t rom-build status-style 'bg=colour235,fg=colour252' 2>/dev/null || true
-tmux set-option -t rom-build status-left-length 30 2>/dev/null || true
-tmux set-option -t rom-build status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour235,fg=colour39] ' 2>/dev/null || true
-tmux set-window-option -t rom-build window-status-style 'bg=colour235,fg=colour245' 2>/dev/null || true
-tmux set-window-option -t rom-build window-status-current-style 'bg=colour238,fg=colour255,bold' 2>/dev/null || true
+tmux set-option -t rom-build status-left-length 60 2>/dev/null || true
+tmux set-window-option -t rom-build window-status-current-format '' 2>/dev/null || true
+tmux set-window-option -t rom-build window-status-format '' 2>/dev/null || true
+if ! tmux show-option -t rom-build status-left 2>/dev/null | grep -q 'bg=colour'; then
+  tmux set-option -t rom-build status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_icon,#{{@build_icon}},⚙}} #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour238,fg=colour255,bold] #{{?@build_detail,#{{@build_detail}},#W}} #[bg=colour235] ' 2>/dev/null || true
+fi
 tmux set-option -t rom-build status-right-length 160 2>/dev/null || true
 tmux set-option -t rom-build status-right '#[fg=colour245][#[fg=colour82,bold]Ctrl+b d#[fg=colour245] Detach | #[fg=colour196,bold]Ctrl+c#[fg=colour245] Stop] #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 """
@@ -296,7 +314,7 @@ WantedBy=multi-user.target
 def _runner_script(vm: dict, command: str, branch: str, mount_point: str, variant: str,
                    sf_upload: bool, gofile_upload: bool, auto_shutdown: bool,
                    build_label: str, win_label: str, device: str,
-                   target_label: str = "") -> str:
+                   target_label: str = "", detail_label: str = "") -> str:
     net_setup = net_speed_setup_cmd()
     q_mp = shlex.quote(mount_point)
     q_status = shlex.quote(f"{mount_point}/build.status")
@@ -322,6 +340,12 @@ if [ -n "$BOOT_AVAIL_MB" ] && [ "$BOOT_AVAIL_MB" -lt 3072 ] 2>/dev/null; then
     ccache -C >/dev/null 2>&1 || rm -rf "$HOME/.ccache"
 fi
 tmux set-option -t rom-build @build_label {shlex.quote(build_label)} 2>/dev/null || true
+tmux set-option -t rom-build @build_detail {shlex.quote(detail_label)} 2>/dev/null || true
+tmux set-option -t rom-build @build_icon "⚙" 2>/dev/null || true
+tmux set-option -t rom-build status-left-length 60 2>/dev/null || true
+tmux set-window-option -t rom-build window-status-current-format "" 2>/dev/null || true
+tmux set-window-option -t rom-build window-status-format "" 2>/dev/null || true
+tmux set-option -t rom-build status-left "#[bg=colour39,fg=colour232,bold] ⚙ {build_label} #[bg=colour238,fg=colour255,bold] {detail_label} #[bg=colour235] " 2>/dev/null || true
 tmux rename-window {shlex.quote(win_label)} 2>/dev/null || true
 sudo touch /run/gcp-build-active 2>/dev/null || true
 sudo rm -f /run/gcp-build-shutdown-pending 2>/dev/null || true
@@ -360,11 +384,15 @@ if [ "$BUILD_EXIT" -eq 0 ]; then
 fi
 
 if [ "$BUILD_EXIT" -eq 0 ]; then
+    tmux set-option -t rom-build @build_icon "✓" 2>/dev/null || true
+    tmux set-option -t rom-build status-left "#[bg=colour82,fg=colour232,bold] ✓ {build_label} #[bg=colour238,fg=colour255,bold] {detail_label} #[bg=colour235] " 2>/dev/null || true
     echo "BUILD_STATUS: SUCCESS ($BUILD_VARIANT) - $(date)" > {q_status} 2>/dev/null || true
     echo -e '\\n\\033[1;32m============================================================\\033[0m'
     echo -e '\\033[1;32m [SUCCESS] Build and upload completed successfully!\\033[0m'
     echo -e '\\033[1;32m============================================================\\033[0m'
 else
+    tmux set-option -t rom-build @build_icon "✗" 2>/dev/null || true
+    tmux set-option -t rom-build status-left "#[bg=colour196,fg=colour255,bold] ✗ {build_label} #[bg=colour238,fg=colour255,bold] {detail_label} #[bg=colour235] " 2>/dev/null || true
     echo "BUILD_STATUS: FAILED (Exit Code $BUILD_EXIT) - $(date)" > {q_status} 2>/dev/null || true
     echo -e '\\n\\033[1;31m============================================================\\033[0m'
     echo -e "\\033[1;31m [ERROR] Build stopped or failed with exit code $BUILD_EXIT!\\033[0m"
@@ -469,6 +497,7 @@ def dispatch_build(
         target_label = "Recovery"
         build_label = "RECOVERY"
         win_label = f"{name}_{device}".lower()
+        detail_label = f"{name.upper()} • {device.strip().upper()}"
     elif target_type == "kernel":
         resolved = resolve_build_disk(vm, version)
         # Kernel builds share the ROM workspace, so track the same target.
@@ -476,12 +505,15 @@ def dispatch_build(
         target_label = f"A{version} Kernel"
         build_label = f"KERNEL A{version}"
         win_label = f"kernel-{name}-{version}".lower()
+        detail_label = f"{name} • {device.strip().upper()}"
     else:
         resolved = resolve_build_disk(vm, version)
         branch = f"aosp-{version}"
         target_label = f"ROM A{version}"
         build_label = f"ROM A{version}"
         win_label = f"{name}_{device}".lower()
+        rom_display = _format_display_name(name)
+        detail_label = f"{rom_display} • {device.strip().upper()}"
 
     target_disk = resolved["disk"]
     mount_point = resolved["mount_point"]
@@ -545,6 +577,7 @@ def dispatch_build(
         variant=variant, sf_upload=sf_upload, gofile_upload=gofile_upload,
         auto_shutdown=auto_shutdown, build_label=build_label,
         win_label=win_label, device=device, target_label=target_label,
+        detail_label=detail_label,
     )
     runner_b64 = base64.b64encode(runner.encode()).decode()
 
