@@ -22,7 +22,6 @@ from cli.services.vm import (
     MACHINE_TYPES,
 )
 from cli.ops.link import submenu_view_links
-from cli.tools.auth import submenu_gcloud_auth
 from cli.tools.console import submenu_ssh_console
 
 
@@ -232,15 +231,14 @@ def run_tools_menu(vm: dict):
         print(f" {BOLD}4){NC} Configure Git Dummy Identity (avoid 429 rate limits)")
         print(f" {BOLD}5){NC} Change VM Timezone (IST or custom)")
         print(f" {BOLD}6){NC} Upload .env Credentials")
-        print(f" {BOLD}7){NC} Google Cloud Login / Switch Account")
-        print(f" {BOLD}8){NC} View Upload Links")
-        print(f" {BOLD}9){NC} Open SSH Console")
+        print(f" {BOLD}7){NC} View Upload Links")
+        print(f" {BOLD}8){NC} Open SSH Console")
         print()
         print(f" {YELLOW}r){NC} Reload / Refresh Tools Menu")
         print(f" {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input("Select option [0-9, r, q, default: 0]: ").strip().lower()
+        choice = read_input("Select option [0-8, r, q, default: 0]: ").strip().lower()
         if choice in ("0", "q", "quit", "exit"):
             return
         if choice in ("r", "reload", "refresh"):
@@ -262,8 +260,6 @@ def run_tools_menu(vm: dict):
         elif choice == "6":
             submenu_upload_env(vm)
         elif choice == "7":
-            submenu_gcloud_auth()
-        elif choice == "8":
             submenu_view_links(vm)
-        elif choice == "9":
+        elif choice == "8":
             submenu_ssh_console(vm)

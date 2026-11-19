@@ -492,12 +492,48 @@ def get_instance_machine_type(vm: dict) -> str:
 # ---------------------------------------------------------------------------
 # SSH / SCP
 # ---------------------------------------------------------------------------
+_SSH_USER_CACHE: dict[str, str] = {}
+
+
 def _ssh_identity_available() -> bool:
     return SSH_KEY.is_file()
 
 
-def _ssh_user() -> str:
-    return os.environ.get("USER") or getpass.getuser()
+def _ssh_user(vm: dict | None = None) -> str:
+    """Determine the remote SSH user on the GCP VM."""
+    vm_name = vm.get("instance", "") if vm else ""
+    if vm_name and vm_name in _SSH_USER_CACHE:
+        return _SSH_USER_CACHE[vm_name]
+
+    # 1. Try gcloud compute ssh --dry-run to discover the exact SSH user and host configuration
+    if vm and vm.get("instance") and vm.get("zone"):
+        try:
+            res = run_gcloud(
+                ["compute", "ssh", vm["instance"], f"--zone={vm['zone']}", "--dry-run"] + _gcloud_scope(vm),
+                check=False, timeout=8,
+            )
+            if res.returncode == 0 and res.stdout:
+                match = re.search(r"\b([a-zA-Z0-9_\.\-]+)@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", res.stdout)
+                if match:
+                    detected = match.group(1)
+                    _SSH_USER_CACHE[vm_name] = detected
+                    return detected
+        except Exception:
+            pass
+
+    # 2. Check active gcloud account
+    account = check_gcloud_auth() or (vm.get("account") if vm else "")
+    if account and "@" in account:
+        detected = account.replace("@", "_").replace(".", "_")
+        if vm_name:
+            _SSH_USER_CACHE[vm_name] = detected
+        return detected
+
+    # 3. Fallback to local username
+    fallback = os.environ.get("USER") or getpass.getuser()
+    if vm_name:
+        _SSH_USER_CACHE[vm_name] = fallback
+    return fallback
 
 
 def _ssh_opts(batch_mode: bool = True) -> list[str]:
@@ -518,31 +554,49 @@ def _ssh_opts(batch_mode: bool = True) -> list[str]:
 
 def vm_exec(vm: dict, cmd_str: str, check: bool = True,
             timeout: int | None = None) -> subprocess.CompletedProcess:
-    """Run a non-interactive command on the VM."""
+    """Run a non-interactive command on the VM with automatic gcloud fallback."""
     ip = get_vm_ip(vm)
+    user = _ssh_user(vm)
     if ip and _ssh_identity_available():
-        cmd = ["ssh", *_ssh_opts(), f"{_ssh_user()}@{ip}", cmd_str]
-    else:
-        cmd = [
-            "gcloud", "compute", "ssh", vm["instance"],
-            f"--zone={vm['zone']}",
-            f"--command={cmd_str}",
-        ] + _gcloud_scope(vm)
-    return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=timeout)
+        cmd = ["ssh", *_ssh_opts(), f"{user}@{ip}", cmd_str]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
+        if res.returncode == 0:
+            return res
+        err_out = (res.stderr or "").lower()
+        if "permission denied" in err_out or "connection refused" in err_out or res.returncode == 255:
+            pass  # Fall through to gcloud compute ssh
+        else:
+            if check and res.returncode != 0:
+                raise subprocess.CalledProcessError(res.returncode, cmd, res.stdout, res.stderr)
+            return res
+
+    gcloud_cmd = [
+        "gcloud", "compute", "ssh", vm["instance"],
+        f"--zone={vm['zone']}",
+        f"--command={cmd_str}",
+    ] + _gcloud_scope(vm)
+    return subprocess.run(gcloud_cmd, capture_output=True, text=True, check=check, timeout=timeout)
 
 
 def vm_exec_tty(vm: dict, cmd_str: str = "bash -l") -> int:
     """Run an interactive PTY command on the VM and restore the local terminal."""
     ip = get_vm_ip(vm)
+    user = _ssh_user(vm)
     try:
         if ip and _ssh_identity_available():
-            cmd = ["ssh", "-t", *_ssh_opts(batch_mode=False), f"{_ssh_user()}@{ip}", cmd_str]
-        else:
-            cmd = [
-                "gcloud", "compute", "ssh", vm["instance"],
-                f"--zone={vm['zone']}",
-            ] + _gcloud_scope(vm) + ["--", "-t", cmd_str]
-        res = subprocess.run(cmd)
+            cmd = ["ssh", "-t", *_ssh_opts(batch_mode=False), f"{user}@{ip}", cmd_str]
+            res = subprocess.run(cmd)
+            if res.returncode == 0:
+                return 0
+            if res.returncode == 255:
+                pass  # Fall through to gcloud compute ssh
+            else:
+                return res.returncode
+        gcloud_cmd = [
+            "gcloud", "compute", "ssh", vm["instance"],
+            f"--zone={vm['zone']}",
+        ] + _gcloud_scope(vm) + ["--", "-t", cmd_str]
+        res = subprocess.run(gcloud_cmd)
         return res.returncode
     finally:
         restore_local_terminal()
@@ -550,34 +604,41 @@ def vm_exec_tty(vm: dict, cmd_str: str = "bash -l") -> int:
 
 def vm_push(vm: dict, local_paths: Iterable[str | Path], remote_dir: str,
             recursive: bool = False) -> subprocess.CompletedProcess:
-    """Copy local file(s) to the VM."""
+    """Copy local file(s) to the VM with automatic gcloud fallback."""
     paths = [str(p) for p in local_paths]
     ip = get_vm_ip(vm)
+    user = _ssh_user(vm)
     if ip and _ssh_identity_available():
         cmd = ["scp", *([] if not recursive else ["-r"]), *_ssh_opts(),
-               *paths, f"{_ssh_user()}@{ip}:{remote_dir}"]
-    else:
-        cmd = ["gcloud", "compute", "scp"]
-        if recursive:
-            cmd.append("--recurse")
-        cmd += paths + [f"{vm['instance']}:{remote_dir}"] + _gcloud_scope(vm) + [f"--zone={vm['zone']}"]
-    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+               *paths, f"{user}@{ip}:{remote_dir}"]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            return res
+    gcloud_cmd = ["gcloud", "compute", "scp"]
+    if recursive:
+        gcloud_cmd.append("--recurse")
+    gcloud_cmd += paths + [f"{vm['instance']}:{remote_dir}"] + _gcloud_scope(vm) + [f"--zone={vm['zone']}"]
+    return subprocess.run(gcloud_cmd, capture_output=True, text=True, check=False)
 
 
 def vm_pull(vm: dict, remote_paths: Iterable[str], local_dir: str,
             recursive: bool = False) -> subprocess.CompletedProcess:
-    """Copy remote file(s) (globs allowed) to a local directory."""
+    """Copy remote file(s) (globs allowed) to a local directory with automatic gcloud fallback."""
     paths = list(remote_paths)
     ip = get_vm_ip(vm)
+    user = _ssh_user(vm)
     if ip and _ssh_identity_available():
-        sources = [f"{_ssh_user()}@{ip}:{p}" for p in paths]
+        sources = [f"{user}@{ip}:{p}" for p in paths]
         cmd = ["scp", *([] if not recursive else ["-r"]), *_ssh_opts(), *sources, local_dir]
-    else:
-        sources = [f"{vm['instance']}:{p}" for p in paths]
-        cmd = ["gcloud", "compute", "scp"]
-        if recursive:
-            cmd.append("--recurse")
-        cmd += sources + [local_dir, f"--zone={vm['zone']}"] + _gcloud_scope(vm)
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            return res
+    sources = [f"{vm['instance']}:{p}" for p in paths]
+    gcloud_cmd = ["gcloud", "compute", "scp"]
+    if recursive:
+        gcloud_cmd.append("--recurse")
+    gcloud_cmd += sources + [local_dir, f"--zone={vm['zone']}"] + _gcloud_scope(vm)
+    return subprocess.run(gcloud_cmd, capture_output=True, text=True, check=False)
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
@@ -615,7 +676,7 @@ def diagnose_ssh_failure(vm: dict, elapsed: int) -> bool:
     probe = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6",
          "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-         "-o", "LogLevel=ERROR", "-i", str(SSH_KEY), f"{_ssh_user()}@{ip}", "true"],
+         "-o", "LogLevel=ERROR", "-i", str(SSH_KEY), f"{_ssh_user(vm)}@{ip}", "true"],
         capture_output=True, text=True,
     )
     print(f"    TCP port 22    : open")
