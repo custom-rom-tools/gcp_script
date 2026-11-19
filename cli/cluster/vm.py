@@ -99,7 +99,7 @@ def submenu_create_vm(project: str) -> dict | None:
     print(f" Specifications:")
     print(f"   - Boot Disk: {GREEN}30GB Free Standard Persistent Disk (pd-standard HDD){NC}")
     print(f"   - OS Image:  {GREEN}Ubuntu 22.04 LTS (x86_64){NC}")
-    print(f"   - Machine:   {GREEN}t2d-standard-16 (16 Dedicated AMD Milan Cores, 60GB RAM){NC}")
+    print(f"   - Machine:   {GREEN}t2d-standard-16 (16 Dedicated AMD Milan Cores, 64GB RAM){NC}")
     print(f"   - Data Disk: {GREEN}Optional (External attachment){NC}")
     print_divider()
 
@@ -142,7 +142,7 @@ def submenu_create_vm(project: str) -> dict | None:
         new_zone = zone_map.get(z_choice or "1", "us-east1-b")
 
     print("\n Machine Type:")
-    print(f"   {GREEN}1){NC} t2d-standard-16 (16 dedicated Milan cores, 60GB RAM - Recommended)")
+    print(f"   {GREEN}1){NC} t2d-standard-16 (16 dedicated Milan cores, 64GB RAM - Recommended)")
     print(f"   {GREEN}2){NC} c2d-standard-16 (16 compute cores, 64GB RAM)")
     print(f"   {GREEN}3){NC} t2d-standard-8  (8 dedicated cores, 32GB RAM)")
     mt_choice = read_input("Choose machine type 1-3 [default: 1 (t2d-standard-16), q=abort]: ").strip()
