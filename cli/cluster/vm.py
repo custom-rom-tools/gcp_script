@@ -14,7 +14,8 @@ from cli.base import (
 from cli.services.vm import (
     get_active_vm, save_active_vm, discover_instances,
     get_default_project, ensure_gcloud_authenticated,
-    create_new_vm, delete_vm_instance, start_vm, stop_vm
+    create_new_vm, delete_vm_instance, start_vm, stop_vm,
+    get_region_from_zone, get_vm_boot_disk, list_disks_in_region
 )
 
 
@@ -170,36 +171,83 @@ def submenu_delete_vm(vms: list[dict], project: str) -> bool:
     target = vms[c_idx - 1]
     target_name = target["name"]
     target_zone = target["zone"]
-    data_disks = [d for d in target["disks"] if d != target_name]
+    target_region = get_region_from_zone(target_zone)
 
-    print(f"\nTarget VM: {RED}{target_name}{NC} in {CYAN}{target_zone}{NC}")
-    print(f"Boot disk '{target_name}' will be automatically deleted.")
+    # 1. Resolve boot disk
+    boot_disk_name = get_vm_boot_disk(target_name, target_zone, project) or target_name
 
-    delete_data_disks = []
-    if data_disks:
-        print(f"\nAttached data disk(s) found: {', '.join(data_disks)}")
-        del_disk_in = read_input("Also delete attached disks? y/N: ").strip().lower()
-        if del_disk_in in ("y", "yes"):
-            delete_data_disks = data_disks
-            print(f"{RED}>>> Data disk(s) WILL BE PERMANENTLY DELETED.{NC}")
-        else:
-            print(f"{GREEN}>>> Data disk(s) will be PRESERVED (detached only).{NC}")
+    print(f"\nTarget VM:    {RED}{BOLD}{target_name}{NC} in zone {CYAN}{target_zone}{NC} (Region: {CYAN}{target_region}{NC})")
+    print(f"Boot Disk:    {RED}{BOLD}{boot_disk_name}{NC} (will be automatically deleted with the VM)")
 
-    print(f"\n{RED}⚠️  WARNING: You are about to permanently delete VM '{target_name}'.{NC}")
-    final_conf = read_input("Type yes to confirm: ").strip()
-    if final_conf != "yes":
+    # 2. Discover all disks in this region (both attached and unattached)
+    print(f"\n{CYAN}>>> Scanning region '{target_region}' for all disks (attached & unattached)...{NC}")
+    region_disks = list_disks_in_region(target_region, project)
+
+    # Filter out boot disk from the list of other regional disks
+    other_disks = [d for d in region_disks if d.get("name") != boot_disk_name]
+    disks_to_delete = []
+
+    if other_disks:
+        print(f"\n{BOLD}Found {len(other_disks)} other disk(s) in region '{target_region}':{NC}")
+        for d in other_disks:
+            d_name = d.get("name", "")
+            d_size = d.get("sizeGb", "")
+            d_zone = d.get("zone", "")
+            users = d.get("users", [])
+
+            if target_name in users:
+                status_desc = f"{YELLOW}Attached to this VM ({target_name}){NC}"
+            elif users:
+                status_desc = f"{YELLOW}Attached to {', '.join(users)}{NC}"
+            else:
+                status_desc = f"{CYAN}Unattached (standalone){NC}"
+
+            print(f"\n • Disk: {BOLD}{d_name}{NC} ({d_size} GB, Zone: {d_zone}) - {status_desc}")
+            ans = read_input(f"   Delete disk '{d_name}'? (y/N): ").strip().lower()
+            if ans in ("y", "yes"):
+                disks_to_delete.append(d)
+                print(f"   {RED}✔ Marked '{d_name}' for deletion.{NC}")
+            else:
+                print(f"   {GREEN}✔ Preserving '{d_name}'.{NC}")
+    else:
+        print(f"\n{GREEN}ℹ No other secondary or standalone disks found in region '{target_region}'.{NC}")
+
+    # 3. Final summary of actions
+    print(f"\n{RED}{'=' * 65}{NC}")
+    print(f"{BOLD}{RED}⚠️  SUMMARY OF PERMANENT DELETION:{NC}")
+    print(f"{RED}{'=' * 65}{NC}")
+    print(f"  • VM Instance: {BOLD}{target_name}{NC} ({target_zone})")
+    print(f"  • Boot Disk:   {BOLD}{boot_disk_name}{NC} {RED}(will be permanently deleted){NC}")
+    if disks_to_delete:
+        print(f"  • Other Disks ({len(disks_to_delete)} to delete in {target_region}):")
+        for d in disks_to_delete:
+            print(f"    - {RED}{d['name']}{NC} ({d['sizeGb']} GB, Zone: {d['zone']})")
+    else:
+        print(f"  • Other Disks: None (all other disks in {target_region} will be preserved)")
+    print(f"{RED}{'=' * 65}{NC}")
+
+    final_conf = read_input("Type yes to confirm permanent deletion: ").strip().lower()
+    if final_conf not in ("yes", "delete"):
         print(">>> Deletion cancelled by user.")
         time.sleep(1)
         return False
 
-    deleted = delete_vm_instance(target_name, target_zone, delete_data_disks, project)
+    deleted = delete_vm_instance(
+        name=target_name,
+        zone=target_zone,
+        boot_disk=boot_disk_name,
+        delete_disks=disks_to_delete,
+        project=project
+    )
     if deleted:
         if target_name == cur_vm.get("instance"):
             remaining = [v for v in discover_instances(project) if v["name"] != target_name]
             if remaining:
                 save_active_vm(remaining[0]["name"], remaining[0]["zone"], project,
                                remaining[0]["general_disk"], remaining[0].get("machine_type", ""))
-        print(f"\n{GREEN}>>> VM deleted.{NC}")
+            else:
+                save_active_vm("", "", project, "gcp-general-disk", "")
+        print(f"\n{GREEN}>>> VM '{target_name}' and selected disks have been permanently deleted.{NC}")
         pause()
         return True
     pause()

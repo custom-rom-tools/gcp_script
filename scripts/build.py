@@ -304,6 +304,10 @@ def compile_rom(
         "export USE_CCACHE=1",
         'export CCACHE_DIR="$HOME/.ccache"',
         'export CCACHE_EXEC="$(which ccache)"',
+        'export CCACHE_MAXSIZE="15G"',
+        'readonly CCACHE_MAXSIZE="15G" 2>/dev/null || true',
+        'ccache -M 15G >/dev/null 2>&1 || true',
+        'ccache -o max_size=15G >/dev/null 2>&1 || true',
         "export SOONG_INCREMENTAL_ANALYSIS=true",
         f"{{ {lunch_chain}; }}",
     ]

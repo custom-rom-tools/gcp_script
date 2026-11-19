@@ -268,7 +268,10 @@ export AUTO_SHUTDOWN=false
 export WRAPPER_SHUTDOWN={'true' if auto_shutdown else 'false'}
 export DEVICE={shlex.quote(device)}
 {net_setup}
-ccache -M 5G >/dev/null 2>&1 || true
+export CCACHE_MAXSIZE=15G
+readonly CCACHE_MAXSIZE 2>/dev/null || true
+ccache -M 15G >/dev/null 2>&1 || true
+ccache -o max_size=15G >/dev/null 2>&1 || true
 BOOT_AVAIL_MB=$(df -Pm / | awk 'NR==2{{print $4}}')
 if [ -n "$BOOT_AVAIL_MB" ] && [ "$BOOT_AVAIL_MB" -lt 3072 ] 2>/dev/null; then
     echo ">>> Boot disk only ${{BOOT_AVAIL_MB}}MB free: clearing ccache before build..."

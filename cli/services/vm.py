@@ -767,6 +767,8 @@ def ensure_running(vm: dict, target_disk: str, mount_point: str) -> bool:
 
 def start_vm(vm: dict) -> bool:
     """Interactive start flow used by the VM menu."""
+    from cli.base import clear_screen
+    clear_screen()
     print("=" * 60)
     print("             GCP INSTANCE & DISK STARTUP")
     print("=" * 60)
@@ -827,6 +829,8 @@ def start_vm(vm: dict) -> bool:
 
 def stop_vm(vm: dict) -> bool:
     """Stop the instance to pause compute billing."""
+    from cli.base import clear_screen
+    clear_screen()
     print("=" * 60)
     print("                 STOPPING GCP INSTANCE")
     print("=" * 60)
@@ -956,25 +960,142 @@ def create_new_vm(name: str, zone: str, machine_type: str, data_disk: str = "",
     }
 
 
-def delete_vm_instance(name: str, zone: str, delete_disks: list[str] | None = None,
-                       project: str = "") -> bool:
-    """Delete an instance and optionally its secondary data disks."""
+def get_region_from_zone(zone: str) -> str:
+    """Extract region from zone (e.g. 'us-central1-a' -> 'us-central1')."""
+    z = zone.rstrip("/").split("/")[-1] if "/" in zone else zone
+    if "-" in z:
+        return z.rsplit("-", 1)[0]
+    return z
+
+
+def get_vm_boot_disk(name: str, zone: str, project: str = "") -> str:
+    """Find the boot disk name for a VM."""
     target_project = project or get_default_project()
-    print(f"\n>>> Deleting instance '{name}' in zone '{zone}'...")
-    args = ["compute", "instances", "delete", name, f"--zone={zone}", "--quiet"]
+    args = ["compute", "instances", "describe", name, f"--zone={zone}", "--format=json(disks)"]
     if target_project:
         args.append(f"--project={target_project}")
+    try:
+        res = run_gcloud(args, check=False, timeout=30)
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout)
+            for d in data.get("disks", []):
+                if d.get("boot", False):
+                    src = d.get("source", "")
+                    if src:
+                        return src.rstrip("/").split("/")[-1]
+    except Exception:
+        pass
+    return name
+
+
+def list_disks_in_region(region: str, project: str = "") -> list[dict]:
+    """List all persistent disks in a given region (attached and unattached)."""
+    target_project = project or get_default_project()
+    args = [
+        "compute", "disks", "list",
+        "--format=json(name,zone.basename(),region.basename(),sizeGb,type.basename(),users[].basename().list(),status)"
+    ]
+    if target_project:
+        args.append(f"--project={target_project}")
+    try:
+        res = run_gcloud(args, check=False, timeout=60)
+        if res.returncode == 0 and res.stdout.strip():
+            raw = json.loads(res.stdout)
+            result = []
+            for d in raw:
+                d_zone = d.get("zone", "")
+                if "/" in d_zone:
+                    d_zone = d_zone.rstrip("/").split("/")[-1]
+                d_reg = d.get("region", "")
+                if "/" in d_reg:
+                    d_reg = d_reg.rstrip("/").split("/")[-1]
+                calc_reg = get_region_from_zone(d_zone) if d_zone else d_reg
+                if calc_reg == region or d_reg == region:
+                    raw_users = d.get("users", []) or []
+                    users = [u.rstrip("/").split("/")[-1] for u in raw_users if u]
+                    result.append({
+                        "name": d.get("name", ""),
+                        "zone": d_zone,
+                        "region": d_reg or calc_reg,
+                        "sizeGb": d.get("sizeGb", ""),
+                        "type": d.get("type", "").rstrip("/").split("/")[-1],
+                        "users": users,
+                        "status": d.get("status", ""),
+                    })
+            return result
+    except Exception:
+        pass
+    return []
+
+
+def delete_vm_instance(name: str, zone: str,
+                       boot_disk: str = "",
+                       delete_disks: list[dict | str] | None = None,
+                       project: str = "") -> bool:
+    """Delete an instance, its boot disk, and optionally secondary data/regional disks."""
+    target_project = project or get_default_project()
+    proj_args = [f"--project={target_project}"] if target_project else []
+
+    print(f"\n>>> Deleting instance '{name}' in zone '{zone}' (along with boot disk)...")
+    # Using --delete-disks=boot ensures GCP deletes the attached boot disk automatically
+    args = ["compute", "instances", "delete", name, f"--zone={zone}", "--delete-disks=boot", "--quiet"] + proj_args
     res = run_gcloud(args, check=False)
     if res.returncode != 0:
         print(f">>> Error: Failed to delete VM: {(res.stderr or res.stdout).strip()}")
         return False
 
-    for disk in delete_disks or []:
-        print(f">>> Deleting data disk '{disk}' in zone '{zone}'...")
-        disk_args = ["compute", "disks", "delete", disk, f"--zone={zone}", "--quiet"]
-        if target_project:
-            disk_args.append(f"--project={target_project}")
-        run_gcloud(disk_args, check=False)
+    print(f" ✔ VM instance '{name}' deleted.")
 
+    # Explicitly check if the boot disk is still present in GCP disks, and delete if found
+    target_boot = boot_disk or name
+    chk_boot = run_gcloud(["compute", "disks", "describe", target_boot, f"--zone={zone}"] + proj_args, check=False)
+    if chk_boot.returncode == 0:
+        print(f">>> Deleting boot disk '{target_boot}' in zone '{zone}'...")
+        res_b = run_gcloud(["compute", "disks", "delete", target_boot, f"--zone={zone}", "--quiet"] + proj_args, check=False)
+        if res_b.returncode == 0:
+            print(f" ✔ Boot disk '{target_boot}' deleted.")
+        else:
+            print(f" ✖ Could not delete boot disk '{target_boot}': {(res_b.stderr or res_b.stdout).strip()}")
+    else:
+        print(f" ✔ Boot disk '{target_boot}' was deleted with the instance.")
+
+    # Delete any additional data or regional disks confirmed by the user
+    for item in delete_disks or []:
+        if isinstance(item, dict):
+            d_name = item.get("name", "")
+            d_zone = item.get("zone") or zone
+            d_region = item.get("region", "")
+            users = item.get("users", [])
+        else:
+            d_name = str(item)
+            d_zone = zone
+            d_region = ""
+            users = []
+
+        if not d_name or d_name == target_boot:
+            continue
+
+        print(f">>> Deleting disk '{d_name}'...")
+        # Detach if attached to any other running/stopped instance
+        for u in users:
+            if u != name:
+                print(f">>> Detaching '{d_name}' from '{u}'...")
+                run_gcloud(["compute", "instances", "detach-disk", u, f"--disk={d_name}", f"--zone={d_zone}", "--quiet"] + proj_args, check=False)
+
+        del_args = ["compute", "disks", "delete", d_name, "--quiet"] + proj_args
+        if d_zone:
+            del_args.append(f"--zone={d_zone}")
+        elif d_region:
+            del_args.append(f"--region={d_region}")
+
+        res_d = run_gcloud(del_args, check=False)
+        if res_d.returncode == 0:
+            print(f" ✔ Disk '{d_name}' deleted.")
+        else:
+            print(f" ✖ Could not delete disk '{d_name}': {(res_d.stderr or res_d.stdout).strip()}")
+
+    # Clear caches
+    _VM_INFO_CACHE.clear()
     discover_instances(target_project, refresh=True)
     return True
+

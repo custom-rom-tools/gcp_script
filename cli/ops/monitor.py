@@ -262,7 +262,7 @@ def show_farm_specs(vm: dict) -> None:
     print(" Failover     : Auto-cascades c2d -> t2d -> c2 when a pool is exhausted")
     print(f" RAM          : {BOLD}64 GB physical RAM{NC} (pure RAM mode by default)")
     print(f" Boot Disk    : {BOLD}50 GB standard disk{NC} (free-tier eligible)")
-    print("              - OS, build packages and persistent ccache (5 GB cap)")
+    print("              - OS, build packages and persistent ccache (15 GB cap)")
     print(" Storage      : Dedicated mounts /mnt/a16, /mnt/a17, /mnt/recovery")
     print("              - gcp-rom-a16-disk, gcp-rom-a17-disk, gcp-recovery-disk")
     print(f"              - General shared {general_disk} (500GB) is the fallback")

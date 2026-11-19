@@ -160,9 +160,11 @@ def run_build_dashboard(vm: dict):
         elif choice == "19":
             monitor.submenu_vm_info(vm)
         elif choice == "20":
+            clear_screen()
             start_vm(vm)
             base.pause()
         elif choice == "21":
+            clear_screen()
             stop_vm(vm)
             base.pause()
         elif choice == "22":
