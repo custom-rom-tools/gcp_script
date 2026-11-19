@@ -21,7 +21,7 @@ def _ensure_vm_online(vm: dict, action: str) -> bool:
     print("     Compute charges are paused.")
     print(f"{YELLOW}{'=' * 61}{NC}")
 
-    answer = read_input(f" Power on VM to {action}? (y/N): ").strip().lower()
+    answer = read_input(f" Power on VM to {action}? [y/N, default: N]: ").strip().lower()
     if answer not in ("y", "yes"):
         print(">>> Aborted. VM remains powered OFF to pause compute billing.")
         return False

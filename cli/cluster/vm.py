@@ -55,7 +55,9 @@ def submenu_select_vm(vms: list[dict], project: str) -> dict | None:
     print(f"\n   {RED}0){NC} Cancel")
     print_divider()
 
-    choice = read_input(f" Select VM 1-{len(all_vms)} or 0: ").strip()
+    choice = read_input(f" Select VM 1-{len(all_vms)} or 0 [default: 1]: ").strip()
+    if not choice:
+        choice = "1"
     try:
         c_idx = int(choice)
         if 1 <= c_idx <= len(all_vms):
@@ -89,12 +91,15 @@ def submenu_create_vm(project: str) -> dict | None:
     print_divider()
 
     existing_vms = [v["name"] for v in discover_instances(project)]
-    idx = 2
-    while f"rom-build-farm-{idx}" in existing_vms or f"rom-build-farm" == f"rom-build-farm-{idx}":
-        idx += 1
-    default_name = f"rom-build-farm-{idx}"
+    if "rom-build-farm" not in existing_vms:
+        default_name = "rom-build-farm"
+    else:
+        idx = 2
+        while f"rom-build-farm-{idx}" in existing_vms:
+            idx += 1
+        default_name = f"rom-build-farm-{idx}"
 
-    in_name = read_input("\nEnter VM name: ").strip()
+    in_name = read_input(f"\nEnter VM name [default: {default_name}]: ").strip()
     new_vm = in_name or default_name
 
     print("\n Select Region & Zone (Lowest-cost Tier 1 regions):")
@@ -102,30 +107,30 @@ def submenu_create_vm(project: str) -> dict | None:
     print(f"   {GREEN}2){NC} us-central1-a (Iowa - Co-cheapest)")
     print(f"   {GREEN}3){NC} us-west1-b    (Oregon - Co-cheapest)")
     print(f"   {GREEN}4){NC} Custom zone")
-    z_choice = read_input("Choose zone 1-4: ").strip()
+    z_choice = read_input("Choose zone 1-4 [default: 1 (us-east1-b)]: ").strip()
 
     zone_map = {"1": "us-east1-b", "2": "us-central1-a", "3": "us-west1-b"}
     if z_choice == "4":
-        cz = read_input("Enter custom GCP zone: ").strip()
+        cz = read_input("Enter custom GCP zone [default: us-east1-b]: ").strip()
         new_zone = cz or "us-east1-b"
     else:
-        new_zone = zone_map.get(z_choice, "us-east1-b")
+        new_zone = zone_map.get(z_choice or "1", "us-east1-b")
 
     print("\n Machine Type:")
     print(f"   {GREEN}1){NC} t2d-standard-16 (16 dedicated Milan cores, 60GB RAM - Recommended)")
     print(f"   {GREEN}2){NC} c2d-standard-16 (16 compute cores, 64GB RAM)")
     print(f"   {GREEN}3){NC} t2d-standard-8  (8 dedicated cores, 32GB RAM)")
-    mt_choice = read_input("Choose machine type 1-3: ").strip()
+    mt_choice = read_input("Choose machine type 1-3 [default: 1 (t2d-standard-16)]: ").strip()
     mt_map = {"1": "t2d-standard-16", "2": "c2d-standard-16", "3": "t2d-standard-8"}
-    new_mt = mt_map.get(mt_choice, "t2d-standard-16")
+    new_mt = mt_map.get(mt_choice or "1", "t2d-standard-16")
 
-    default_disk = f"gcp-data-disk-{idx}"
-    att_choice = read_input("\nAttach data disk? y/N: ").strip().lower()
+    default_disk = "gcp-general-disk"
+    att_choice = read_input("\nAttach data disk? [y/N, default: N]: ").strip().lower()
     attach_disk = att_choice in ("y", "yes")
 
     new_disk = ""
     if attach_disk:
-        in_disk = read_input("Data disk name: ").strip()
+        in_disk = read_input(f"Data disk name [default: {default_disk}]: ").strip()
         new_disk = in_disk or default_disk
 
     print(f"\n{YELLOW}Ready to create VM:{NC}")
@@ -136,8 +141,8 @@ def submenu_create_vm(project: str) -> dict | None:
     if attach_disk:
         print(f"  Data Disk:     {BOLD}{new_disk}{NC}")
 
-    conf = read_input("\nProceed with VM creation? y/N: ").strip().lower()
-    if conf not in ("y", "yes"):
+    conf = read_input("\nProceed with VM creation? [Y/n, default: Y]: ").strip().lower()
+    if conf in ("n", "no"):
         print(">>> Creation cancelled.")
         time.sleep(1)
         return None
@@ -292,7 +297,9 @@ def submenu_toggle_power(vms: list[dict], project: str):
 
     print(f"\n   {RED}0){NC} Cancel")
     print_divider()
-    pwr_num = read_input(f" Enter VM number 1-{len(vms)} or 0: ").strip()
+    pwr_num = read_input(f" Enter VM number 1-{len(vms)} or 0 [default: 1]: ").strip()
+    if not pwr_num:
+        pwr_num = "1"
     if pwr_num.isdigit() and 1 <= int(pwr_num) <= len(vms):
         target_v = vms[int(pwr_num) - 1]
         target_dict = {
@@ -363,7 +370,7 @@ def run_cluster_menu() -> dict:
         print(f" {RED}q){NC} Quit")
         print_divider()
 
-        choice = read_input(" Select 1-6, 0 or q: ").strip().lower()
+        choice = read_input(" Select 1-6, 0 or q [default: 0]: ").strip().lower()
 
         if choice in ("", "0"):
             if count == 0:

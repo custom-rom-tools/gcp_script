@@ -134,7 +134,7 @@ def ensure_gcloud_authenticated() -> bool:
     print("=" * 65)
     from cli.base import read_input
 
-    choice = read_input("Sign in to Google Cloud now? Y/n: ").strip().lower()
+    choice = read_input("Sign in to Google Cloud now? [Y/n, default: Y]: ").strip().lower()
     if choice not in ("n", "no"):
         return login_gcloud()
     return False

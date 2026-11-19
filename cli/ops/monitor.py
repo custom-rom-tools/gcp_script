@@ -209,7 +209,7 @@ def submenu_stop_build(vm: dict):
     print(processes or "None (No active compiler processes).")
     print()
 
-    answer = read_input("Are you sure you want to STOP and cancel the current build? (y/N): ")
+    answer = read_input("Are you sure you want to STOP and cancel the current build? [y/N, default: N]: ")
     if answer.strip().lower() not in ("y", "yes"):
         print(">>> Aborted. Build continues running.")
         pause()

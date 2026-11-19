@@ -49,24 +49,30 @@ def submenu_disk_manager(vm: dict):
         print(f"  {BOLD}0){NC} Back to Main Menu")
         print_divider()
 
-        choice = read_input(" Select option [0-10]: ").strip().lower()
+        choice = read_input(" Select option [0-10, default: 0]: ").strip().lower()
         if choice in ("0", "q", ""):
             return
-        if choice == "1":
-            create_and_attach_disk(vm, general["name"], general["size_gb"],
-                                   "Shared general storage for ROM and recovery builds")
-            pause()
-        elif choice == "2":
-            create_and_attach_disk(vm, a16["name"], a16["size_gb"],
-                                   "Dedicated storage for Android 16 ROM builds")
-            pause()
-        elif choice == "3":
-            create_and_attach_disk(vm, a17["name"], a17["size_gb"],
-                                   "Dedicated storage for Android 17 ROM builds")
-            pause()
-        elif choice == "4":
-            create_and_attach_disk(vm, rec["name"], rec["size_gb"],
-                                   "Dedicated storage for Recovery builds (OFRP + TWRP)")
+        if choice in ("1", "2", "3", "4"):
+            preset_map = {
+                "1": general,
+                "2": a16,
+                "3": a17,
+                "4": rec,
+            }
+            preset = preset_map[choice]
+            default_dname = preset["name"]
+            default_dsize = preset["size_gb"]
+            desc = preset.get("description", "Dedicated storage for ROM builds")
+            print(f"\n{BOLD}--- Create & Link {default_dname} ---{NC}")
+            in_dname = read_input(f"Enter disk name [default: {default_dname}]: ").strip()
+            target_dname = in_dname or default_dname
+            in_dsize = read_input(f"Enter disk size in GB [default: {default_dsize}]: ").strip()
+            target_dsize = int(in_dsize) if in_dsize.isdigit() and int(in_dsize) > 0 else default_dsize
+            conf = read_input(f"Proceed with creating '{target_dname}' ({target_dsize}GB)? [Y/n, default: Y]: ").strip().lower()
+            if conf not in ("n", "no"):
+                create_and_attach_disk(vm, target_dname, target_dsize, desc)
+            else:
+                print(">>> Disk creation cancelled.")
             pause()
         elif choice == "5":
             attach_disk_action(vm)

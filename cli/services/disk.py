@@ -473,8 +473,8 @@ def create_and_attach_disk(vm: dict, target_disk: str, size_gb: int | None = Non
         res = run_gcloud(args, check=False, timeout=300)
         if res.returncode != 0:
             print("\n>>> Notice: Regional SSD quota ('SSD_TOTAL_GB' = 500GB) may be exceeded.")
-            answer = read_input("Create as pd-standard HDD instead? (y/N): ").strip().lower()
-            if answer not in ("y", "yes"):
+            answer = read_input("Create as pd-standard HDD instead? [Y/n, default: Y]: ").strip().lower()
+            if answer in ("n", "no"):
                 print(">>> Aborting disk creation.")
                 return False
             args = [
@@ -589,7 +589,9 @@ def _select_disk(vm: dict, disks: list[str], title: str, action: str) -> str:
         size = get_disk_size(vm, name)
         print(f" {BOLD}{idx}){NC} {name} ({size or '?'} GB - {get_disk_role_label(name, vm)})")
     print(f" {BOLD}0){NC} Cancel")
-    choice = read_input(f"Select disk number to {action} [1-{len(disks)} or 0]: ").strip()
+    choice = read_input(f"Select disk number to {action} [1-{len(disks)} or 0, default: 1]: ").strip()
+    if not choice:
+        choice = "1"
     if not choice.isdigit():
         return ""
     idx = int(choice)
@@ -683,7 +685,9 @@ def mount_disk_action(vm: dict, target_disk: str = "", mount_point: str = "") ->
         print(f"\n   {RED}0){NC} Cancel")
         print_divider()
 
-        sel = read_input(f" Select disk 1-{len(attached)} or 0: ").strip()
+        sel = read_input(f" Select disk 1-{len(attached)} or 0 [default: 1]: ").strip()
+        if not sel:
+            sel = "1"
         try:
             s_idx = int(sel)
             if s_idx == 0:
@@ -699,7 +703,7 @@ def mount_disk_action(vm: dict, target_disk: str = "", mount_point: str = "") ->
     meta = get_disk_meta(target_disk, vm)
     default_mp = meta.get("default_mount") or "/mnt/a16"
     if not mount_point:
-        mp_input = read_input(f"\nEnter mount point [{default_mp}]: ").strip()
+        mp_input = read_input(f"\nEnter mount point [default: {default_mp}]: ").strip()
         mount_point = mp_input or default_mp
 
     print(f"\n>>> Mounting {BOLD}{target_disk}{NC} to {BOLD}{mount_point}{NC} on VM '{vm['instance']}'...")

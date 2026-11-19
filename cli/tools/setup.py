@@ -53,7 +53,7 @@ def submenu_watchdog(vm: dict):
 
     print(get_watchdog_status(vm))
     print()
-    answer = read_input("Re-deploy / restart watchdog service now? (y/N): ").strip().lower()
+    answer = read_input("Re-deploy / restart watchdog service now? [y/N, default: N]: ").strip().lower()
     if answer in ("y", "yes"):
         deploy_watchdog(vm)
     pause()
@@ -79,14 +79,14 @@ def submenu_dummy_git(vm: dict):
     print(f"   Name : {GREEN}{default_name}{NC}")
     print(f"   Email: {GREEN}{default_email}{NC}\n")
 
-    choice = read_input("Use recommended dummy identity? [Y/n] (or 'c' for custom): ").strip().lower()
+    choice = read_input("Use recommended dummy identity? [Y/n, default: Y] (or 'c' for custom): ").strip().lower()
     name, email = default_name, default_email
     if choice == "c":
-        custom_name = read_input("Enter dummy user.name : ").strip()
-        custom_email = read_input("Enter dummy user.email: ").strip()
+        custom_name = read_input(f"Enter dummy user.name [default: {default_name}]: ").strip()
+        custom_email = read_input(f"Enter dummy user.email [default: {default_email}]: ").strip()
         name = custom_name or default_name
         email = custom_email or default_email
-    elif choice == "n":
+    elif choice in ("n", "no"):
         print("Cancelled without changes.")
         pause()
         return
@@ -127,7 +127,7 @@ def submenu_timezone(vm: dict):
         pause()
         return
     if choice == "5":
-        target = read_input("Enter timezone name (e.g. Asia/Kolkata, Europe/London): ").strip()
+        target = read_input("Enter timezone name [default: Asia/Kolkata]: ").strip() or "Asia/Kolkata"
     else:
         target = mapping.get(choice, choice)
 

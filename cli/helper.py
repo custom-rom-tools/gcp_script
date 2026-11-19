@@ -87,7 +87,10 @@ def prompt_rom_device(rom_label: str, rom_key: str, version: str) -> str:
     print(f"\n   {YELLOW}0){NC} Back to Main Menu")
     print(f"{CYAN}{'-' * 65}{NC}")
 
-    choice = read_input(f" Select device [0-{all_idx}]: ").strip().lower()
+    def_code = entries[0][0] if entries else ""
+    choice = read_input(f" Select device [0-{all_idx}, default: 1 ({def_code})]: ").strip().lower()
+    if not choice:
+        choice = "1"
     if choice in ("q", "quit", "exit"):
         return ""
     return index.get(choice, "")
@@ -119,7 +122,10 @@ def prompt_recovery_device(recovery_label: str, recovery_key: str) -> str:
     print(f"\n   {CYAN}0){NC} Back to Main Menu")
     print(f"{CYAN}{'-' * 65}{NC}")
 
-    choice = read_input(f" Select target [0-{all_idx}]: ").strip().lower()
+    def_rec = ordered[0][0] if ordered else "sm7125"
+    choice = read_input(f" Select target [0-{all_idx}, default: 1 ({def_rec})]: ").strip().lower()
+    if not choice:
+        choice = "1"
     if choice in ("q", "quit", "exit"):
         return ""
     return index.get(choice, "")
@@ -139,7 +145,10 @@ def prompt_kernel_device(version: str, kernel_key: str = "atoll") -> str:
     print(f"\n   {YELLOW}0){NC} Back to Main Menu")
     print(f"{CYAN}{'-' * 65}{NC}")
 
-    choice = read_input(f" Select device [0-{len(entries)}]: ").strip().lower()
+    def_kern = entries[0][0] if entries else ""
+    choice = read_input(f" Select device [0-{len(entries)}, default: 1 ({def_kern})]: ").strip().lower()
+    if not choice:
+        choice = "1"
     if choice in ("q", "quit", "exit"):
         return ""
     return index.get(choice, "")
@@ -184,19 +193,18 @@ def prompt_build_options(default_shutdown: bool = False) -> dict:
     """Prompt for upload targets and shutdown behaviour (no disk format)."""
     print(f"\n{BOLD}Build options:{NC}")
 
-    sf_in = read_input(" Upload to SourceForge too? (y/N): ").strip().lower()
+    sf_in = read_input(" Upload to SourceForge too? [y/N, default: N]: ").strip().lower()
     sf_upload = sf_in in ("y", "yes")
 
-    gofile_in = read_input(" Upload to Gofile.io too? (Y/n): ").strip().lower()
+    gofile_in = read_input(" Upload to Gofile.io too? [Y/n, default: Y]: ").strip().lower()
     gofile_upload = gofile_in not in ("n", "no")
 
     if default_shutdown:
-        shut_in = read_input(" Power off immediately when build ends? (Y/n): ").strip().lower()
+        shut_in = read_input(" Power off immediately when build ends? [Y/n, default: Y]: ").strip().lower()
         auto_shutdown = shut_in not in ("n", "no")
     else:
         shut_in = read_input(
-            " Power off immediately when build ends? "
-            "(y/N; default: n = keep VM running for 30m): "
+            " Power off immediately when build ends? [y/N, default: N]: "
         ).strip().lower()
         auto_shutdown = shut_in in ("y", "yes")
 

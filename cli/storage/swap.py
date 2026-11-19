@@ -91,7 +91,7 @@ def submenu_swap_manager(vm: dict):
                 continue
             print(f"{YELLOW}>>> Searching for existing swapfiles on VM...{NC}")
             print(list_swapfiles(vm) or "No common swapfiles found.")
-            path = read_input(" Enter full path of swapfile to DELETE: ").strip()
+            path = read_input(" Enter full path of swapfile to DELETE [default: /mnt/a16/swapfile]: ").strip() or "/mnt/a16/swapfile"
             if path:
                 if delete_swap(vm, path):
                     print(f">>> Swapfile {path} deleted.")

@@ -112,7 +112,7 @@ def run_build_dashboard(vm: dict):
         print(f"   {RED}q){NC} Quit")
         print_divider()
 
-        choice = read_input(" Select option [1-28, r, q]: ").strip().lower()
+        choice = read_input(" Select option [1-28, r, q, default: r]: ").strip().lower()
 
         if choice in ("q", "quit", "exit"):
             print("Goodbye!")
@@ -396,9 +396,17 @@ def main():
 
     elif command == "create-disk":
         from cli.services.disk import create_and_attach_disk
-        disk_name = sys.argv[2] if len(sys.argv) > 2 else "general"
-        size = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3].isdigit() else None
-        description = sys.argv[4] if len(sys.argv) > 4 else ""
+        if len(sys.argv) > 2:
+            disk_name = sys.argv[2]
+        else:
+            in_name = read_input("Enter disk name [default: gcp-general-disk]: ").strip()
+            disk_name = in_name or "gcp-general-disk"
+        if len(sys.argv) > 3 and sys.argv[3].isdigit():
+            size = int(sys.argv[3])
+        else:
+            in_size = read_input("Enter disk size in GB [default: 500]: ").strip()
+            size = int(in_size) if in_size.isdigit() and int(in_size) > 0 else 500
+        description = sys.argv[4] if len(sys.argv) > 4 else "General build storage"
         create_and_attach_disk(vm, disk_name, size, description)
 
     elif command == "delete-disk":

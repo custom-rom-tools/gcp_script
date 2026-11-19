@@ -388,7 +388,7 @@ def _general_disk_data_prompt(vm: dict, target_disk: str, mount_point: str, bran
     if used:
         print(f"    Disk Usage      : {used}")
     print(f"    Top Entries     : {dirs}")
-    answer = read_input(f" Format '{target_disk}' clean (ext4) before starting '{display}' build? (y/N): ")
+    answer = read_input(f" Format '{target_disk}' clean (ext4) before starting '{display}' build? [y/N, default: N]: ")
     if answer.strip().lower() in ("y", "yes"):
         if format_disk_action(vm, target_disk, auto_yes=True):
             from cli.services.disk import mount_disk_on_vm
