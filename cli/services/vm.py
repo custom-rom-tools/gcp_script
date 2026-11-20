@@ -548,23 +548,35 @@ def vm_exec(vm: dict, cmd_str: str, check: bool = True,
     user = _ssh_user(vm)
     if ip and _ssh_identity_available():
         cmd = ["ssh", *_ssh_opts(), f"{user}@{ip}", cmd_str]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
-        if res.returncode == 0:
-            return res
-        err_out = (res.stderr or "").lower()
-        if "permission denied" in err_out or "connection refused" in err_out or res.returncode == 255:
-            pass  # Fall through to gcloud compute ssh
-        else:
-            if check and res.returncode != 0:
-                raise subprocess.CalledProcessError(res.returncode, cmd, res.stdout, res.stderr)
-            return res
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
+            if res.returncode == 0:
+                return res
+            err_out = (res.stderr or "").lower()
+            if "permission denied" in err_out or "connection refused" in err_out or res.returncode == 255:
+                pass  # Fall through to gcloud compute ssh
+            else:
+                if check and res.returncode != 0:
+                    raise subprocess.CalledProcessError(res.returncode, cmd, res.stdout, res.stderr)
+                return res
+        except subprocess.TimeoutExpired:
+            if not check:
+                pass
+            else:
+                raise
 
     gcloud_cmd = [
         "gcloud", "compute", "ssh", vm["instance"],
         f"--zone={vm['zone']}",
         f"--command={cmd_str}",
     ] + _gcloud_scope(vm)
-    return subprocess.run(gcloud_cmd, capture_output=True, text=True, check=check, timeout=timeout)
+    try:
+        return subprocess.run(gcloud_cmd, capture_output=True, text=True, check=check, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if not check:
+            return subprocess.CompletedProcess(args=gcloud_cmd, returncode=124, stdout="",
+                                              stderr=f"Command timed out after {timeout}s")
+        raise
 
 
 def vm_exec_tty(vm: dict, cmd_str: str = "bash -l") -> int:

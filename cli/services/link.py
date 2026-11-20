@@ -48,6 +48,8 @@ def dedupe_links(lines: list[str]) -> list[str]:
 
 
 def _metadata_links(vm: dict) -> list[str]:
+    if not vm or not vm.get("instance") or not vm.get("zone"):
+        return []
     args = [
         "compute", "instances", "describe", vm["instance"],
         f"--zone={vm['zone']}",
@@ -55,7 +57,7 @@ def _metadata_links(vm: dict) -> list[str]:
     ]
     if vm.get("project"):
         args.append(f"--project={vm['project']}")
-    res = run_gcloud(args, check=False, timeout=45)
+    res = run_gcloud(args, check=False, timeout=15)
     if res.returncode != 0 or not res.stdout:
         return []
     try:
@@ -68,8 +70,39 @@ def _metadata_links(vm: dict) -> list[str]:
     return []
 
 
+def _write_metadata_links(vm: dict, lines: list[str]) -> bool:
+    """Save upload links to GCP instance metadata so they survive shutdowns."""
+    if not vm or not vm.get("instance") or not vm.get("zone"):
+        return False
+    import tempfile
+    content = "\n".join(lines) + ("\n" if lines else "")
+    tf_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as tf:
+            tf.write(content)
+            tf_path = tf.name
+        args = [
+            "compute", "instances", "add-metadata", vm["instance"],
+            f"--zone={vm['zone']}",
+            f"--metadata-from-file=upload-links={tf_path}",
+        ]
+        if vm.get("project"):
+            args.append(f"--project={vm['project']}")
+        res = run_gcloud(args, check=False, timeout=15)
+        return res.returncode == 0
+    except Exception:
+        return False
+    finally:
+        if tf_path:
+            try:
+                Path(tf_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def _write_local_links(lines: list[str]) -> None:
     try:
+        LOCAL_LINKS_FILE.parent.mkdir(parents=True, exist_ok=True)
         LOCAL_LINKS_FILE.write_text("\n".join(lines) + ("\n" if lines else ""),
                                     encoding="utf-8")
     except OSError:
@@ -77,22 +110,39 @@ def _write_local_links(lines: list[str]) -> None:
 
 
 def sync_links_from_vm(vm: dict) -> list[str]:
-    """Synchronise and return every known upload link."""
+    """Synchronise and return every known upload link across local, cloud metadata, and VM."""
     merged: list[str] = []
     try:
         merged.extend(LOCAL_LINKS_FILE.read_text(encoding="utf-8", errors="replace").splitlines())
     except OSError:
         pass
 
-    merged.extend(_metadata_links(vm))
+    try:
+        merged.extend(_metadata_links(vm))
+    except Exception:
+        pass
 
     if is_vm_running(vm):
-        res = vm_exec(vm, "cat ~/.upload_links.log 2>/dev/null || true",
-                      check=False, timeout=30)
-        merged.extend((res.stdout or "").replace("\r", "").splitlines())
+        try:
+            cmd = (
+                "cat ~/.upload_links.log "
+                "/mnt/a16/.upload_links.log "
+                "/mnt/a17/.upload_links.log "
+                "/mnt/recovery/.upload_links.log "
+                "/tmp/.upload_links.log 2>/dev/null || true"
+            )
+            res = vm_exec(vm, cmd, check=False, timeout=10)
+            if res.returncode == 0 or res.stdout:
+                merged.extend((res.stdout or "").replace("\r", "").splitlines())
+        except Exception:
+            pass
 
     links = dedupe_links(merged)
     _write_local_links(links)
+    try:
+        _write_metadata_links(vm, links)
+    except Exception:
+        pass
     return links
 
 

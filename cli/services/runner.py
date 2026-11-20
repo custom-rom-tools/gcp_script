@@ -259,13 +259,13 @@ fi
 
 
 def sync_build_tools_to_vm(vm: dict) -> bool:
-    """Sync scripts/ and configs/ into ~/.gcp_farm and refresh ~/upload.py."""
+    """Sync scripts/, configs/, and patches/ into ~/.gcp_farm and refresh ~/upload.py."""
     print(">>> Syncing build tools and configs to VM...", end="", flush=True)
-    vm_exec(vm, f"mkdir -p {REMOTE_FARM} && rm -rf {REMOTE_FARM}/scripts {REMOTE_FARM}/configs",
+    vm_exec(vm, f"mkdir -p {REMOTE_FARM} && rm -rf {REMOTE_FARM}/scripts {REMOTE_FARM}/configs {REMOTE_FARM}/patches",
             check=False, timeout=30)
 
     ok = True
-    for folder in ("scripts", "configs"):
+    for folder in ("scripts", "configs", "patches"):
         local = REPO_ROOT / folder
         if local.is_dir():
             res = vm_push(vm, [local], f"{REMOTE_FARM}/", recursive=True)
@@ -411,9 +411,10 @@ stty start undef 2>/dev/null || true
 BUILD_SCRIPT_TMP="/tmp/gcp_build_script.py"
 if [ -s ~/.gcp_farm/scripts/build.py ]; then
     cp ~/.gcp_farm/scripts/build.py "$BUILD_SCRIPT_TMP"
-    mkdir -p /tmp/configs /tmp/scripts
+    mkdir -p /tmp/configs /tmp/scripts /tmp/patches
     cp -r ~/.gcp_farm/configs/* /tmp/configs/ 2>/dev/null || true
     cp -r ~/.gcp_farm/scripts/* /tmp/scripts/ 2>/dev/null || true
+    cp -r ~/.gcp_farm/patches/* /tmp/patches/ 2>/dev/null || true
     BUILD_EXIT=0
 else
     echo ">>> [ERROR] Remote build engine ~/.gcp_farm/scripts/build.py is missing" | tee {q_log}
@@ -435,6 +436,7 @@ if [ "$BUILD_EXIT" -eq 0 ]; then
     tmux set-option -t rom-build @build_icon "✓" 2>/dev/null || true
     tmux set-option -t rom-build status-left "#[bg=colour82,fg=colour232,bold] ✓ {build_label} #[bg=colour238,fg=colour255,bold] {detail_label} #[bg=colour235] " 2>/dev/null || true
     echo "BUILD_STATUS: SUCCESS ($BUILD_VARIANT) - $(date)" > {q_status} 2>/dev/null || true
+    [ -f "$HOME/.upload_links.log" ] && sudo cp -f "$HOME/.upload_links.log" "{mount_point}/.upload_links.log" 2>/dev/null || true
     echo -e '\\n\\033[1;32m============================================================\\033[0m'
     echo -e '\\033[1;32m [SUCCESS] Build and upload completed successfully!\\033[0m'
     echo -e '\\033[1;32m============================================================\\033[0m'
@@ -795,4 +797,9 @@ def dispatch_build(
     if attach_live:
         print("\nConnecting to live build session in tmux... (Detach: Ctrl+B then D)\n")
         attach_tmux_session(vm)
+        try:
+            from cli.services.link import sync_links_from_vm
+            sync_links_from_vm(vm)
+        except Exception:
+            pass
     return True
