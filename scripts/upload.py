@@ -797,6 +797,20 @@ def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> Non
     except Exception as e:
         print(f">>> [WARN] Failed to write {vm_log}: {e}")
 
+    # Also persist to active storage mount points and /tmp
+    for extra_dest in [
+        Path("/mnt/a16/.upload_links.log"),
+        Path("/mnt/a17/.upload_links.log"),
+        Path("/mnt/recovery/.upload_links.log"),
+        Path("/tmp/.upload_links.log"),
+    ]:
+        try:
+            if extra_dest.parent.is_dir():
+                with extra_dest.open("a", encoding="utf-8") as fh:
+                    fh.write("\n".join(lines) + "\n")
+        except Exception:
+            pass
+
 def main():
     args = sys.argv[1:]
     do_sf = None

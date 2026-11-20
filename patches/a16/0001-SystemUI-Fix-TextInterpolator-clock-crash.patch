@@ -1,0 +1,25 @@
+Subject: [PATCH] SystemUI: Fix TextInterpolator clock crash on digit mutation
+
+In TextInterpolator.kt, require(baseGlyphId == targetGlyphId) throws
+IllegalArgumentException whenever digits change (e.g. from 0 to 1),
+crashing SystemUI on lockscreen time update.
+
+---
+ .../animation/TextInterpolator.kt             | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/SystemUI/animation/src/com/android/systemui/animation/TextInterpolator.kt b/packages/SystemUI/animation/src/com/android/systemui/animation/TextInterpolator.kt
+--- a/packages/SystemUI/animation/src/com/android/systemui/animation/TextInterpolator.kt
++++ b/packages/SystemUI/animation/src/com/android/systemui/animation/TextInterpolator.kt
+@@ -370,8 +370,8 @@
+         for (i in 0 until numGlyphs) {
+             val baseGlyphId = baseRun.glyphs[i]
+             val targetGlyphId = targetRun.glyphs[i]
+-            require(baseGlyphId == targetGlyphId) {
+-                "The new layout has different glyph ID at $i"
++            if (baseGlyphId != targetGlyphId) {
++                return
+             }
+             val numInterp = interp.points.size
+         }
+-- 
