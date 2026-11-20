@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -170,6 +171,59 @@ def reset_manual_repos(repo_root: Path) -> None:
             subprocess.run(["git", "-C", str(core_dir), "clean", "-fdx"], capture_output=True)
 
 
+def reset_all_dirty_repos(repo_root: Path) -> None:
+    """Scan all repos across the source tree and reset any repo that has uncommitted/local changes."""
+    repos: list[Path] = []
+
+    plist = repo_root / ".repo" / "project.list"
+    if plist.is_file():
+        try:
+            for line in plist.read_text(encoding="utf-8", errors="ignore").splitlines():
+                proj = line.strip()
+                if proj:
+                    p = repo_root / proj
+                    if (p / ".git").exists() or (p / ".git").is_file():
+                        repos.append(p)
+        except Exception:
+            pass
+
+    # Fallback/supplement with common core trees if project.list is absent
+    if not repos:
+        for prefix in ["frameworks/base", "build/make", "build/soong", "system/core", "bootable/recovery"]:
+            p = repo_root / prefix
+            if (p / ".git").exists() or (p / ".git").is_file():
+                repos.append(p)
+
+    if not repos:
+        return
+
+    def _check_and_reset(p: Path) -> str | None:
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(p), "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                rel = str(p.relative_to(repo_root))
+                subprocess.run(["git", "-C", str(p), "reset", "--hard", "HEAD"], capture_output=True, timeout=30)
+                subprocess.run(["git", "-C", str(p), "clean", "-fd"], capture_output=True, timeout=30)
+                return rel
+        except Exception:
+            pass
+        return None
+
+    workers = min(32, os.cpu_count() or 4)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        reset_list = [r for r in executor.map(_check_and_reset, repos) if r]
+
+    if reset_list:
+        print(f">>> [CLEAN] Reset {len(reset_list)} repository/repositories with local changes:")
+        for r in reset_list:
+            print(f"    - {r}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Clean repo locks and reset manual repos")
     parser.add_argument("path", nargs="?", default=".", help="Root directory of repo source tree")
@@ -183,6 +237,7 @@ def main() -> int:
     kill_stale_processes()
     clean_locks(repo_root)
     reset_manual_repos(repo_root)
+    reset_all_dirty_repos(repo_root)
     print("=== Cleanup Complete (out/ directory preserved) ===")
     return 0
 
