@@ -591,6 +591,7 @@ def _select_disk(vm: dict, disks: list[str], title: str, action: str) -> str:
     if not disks:
         print(f">>> No disks available to {action}.")
         return ""
+    disks = sorted(disks)
     print("=" * 60)
     print(f" {title}")
     print("=" * 60)
@@ -668,7 +669,7 @@ def mount_disk_action(vm: dict, target_disk: str = "", mount_point: str = "") ->
         print("    Please start the VM first to mount disks.")
         return False
 
-    attached = _secondary_disks(vm)
+    attached = sorted(_secondary_disks(vm), key=lambda d: d.get("name", ""))
     if not attached:
         print(f"\n{YELLOW}>>> No attached secondary disks found on '{vm['instance']}'.{NC}")
         print("    Attach a disk first (Option 5).")

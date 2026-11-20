@@ -268,6 +268,7 @@ def discover_instances(project: str = "", refresh: bool = False) -> list[dict]:
             "project": target_project,
         })
 
+    discovered.sort(key=lambda item: item["name"])
     _DISCOVER_CACHE[target_project] = (now, discovered)
     return discovered
 

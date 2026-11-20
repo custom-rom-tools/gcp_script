@@ -29,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REMOTE_FARM = "~/.gcp_farm"
 
 NET_SPEED_SCRIPT = r"""#!/usr/bin/env bash
-# GCP-NET-SPEED-V4
+# GCP-NET-SPEED-V5
 MODE="$1"
 STATE_FILE="/tmp/vm_net_speed_$(id -u).state"
 
@@ -43,10 +43,12 @@ read -r _ u n s i w irq sirq st _ < /proc/stat
 cpu_total=$((u + n + s + i + w + irq + sirq + st))
 cpu_idle=$((i + w))
 
-read -r mem_total mem_avail < <(awk '
+read -r mem_total mem_avail swap_total swap_free < <(awk '
   /^MemTotal:/ { t = $2 }
   /^MemAvailable:/ { a = $2 }
-  END { printf "%.0f %.0f\n", t, a }
+  /^SwapTotal:/ { st = $2 }
+  /^SwapFree:/ { sf = $2 }
+  END { printf "%.0f %.0f %.0f %.0f\n", t, a, st, sf }
 ' /proc/meminfo)
 
 [ -r "$STATE_FILE" ] && read -r prev_t prev_rx prev_tx prev_cpu_total prev_cpu_idle < "$STATE_FILE" 2>/dev/null || true
@@ -56,7 +58,8 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
     -v prev_t="${prev_t:-0}" -v prev_rx="${prev_rx:-0}" -v prev_tx="${prev_tx:-0}" \
     -v cpu_tot="$cpu_total" -v cpu_idl="$cpu_idle" \
     -v prev_cpu_tot="${prev_cpu_total:-0}" -v prev_cpu_idl="${prev_cpu_idle:-0}" \
-    -v m_tot="$mem_total" -v m_avail="$mem_avail" '
+    -v m_tot="$mem_total" -v m_avail="$mem_avail" \
+    -v s_tot="$swap_total" -v s_free="$swap_free" '
   function fmt(b) {
     if (b >= 1048576) return sprintf("%.1f MB/s", b / 1048576);
     if (b >= 1024)    return sprintf("%.0f KB/s", b / 1024);
@@ -79,6 +82,14 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
       ram_pct = 0;
     }
 
+    if (s_tot > 0) {
+      swap_pct = int(100 * (s_tot - s_free) / s_tot);
+      if (swap_pct < 0) swap_pct = 0;
+      if (swap_pct > 100) swap_pct = 100;
+    } else {
+      swap_pct = 0;
+    }
+
     dt = now_t - prev_t;
     if (prev_t <= 0 || dt <= 0 || dt > 60 || rx < prev_rx || tx < prev_tx) {
       dl_str = "DL 0 KB/s";
@@ -97,17 +108,22 @@ awk -v mode="$MODE" -v now_t="$now_t" -v rx="$rx" -v tx="$tx" \
       else if (ram_pct >= 70) c_ram = "#[fg=colour220,bold]";
       else c_ram = "#[fg=colour51,bold]";
 
-      printf "%sCPU %d%% #[fg=colour242]| %sRAM %d%% #[fg=colour242]| #[fg=colour82,bold]%s #[fg=colour242]| #[fg=colour214,bold]%s\n",
-             c_cpu, cpu_pct, c_ram, ram_pct, dl_str, ul_str;
+      if (swap_pct >= 80) c_swap = "#[fg=colour196,bold]";
+      else if (swap_pct >= 40) c_swap = "#[fg=colour220,bold]";
+      else if (s_tot > 0) c_swap = "#[fg=colour141,bold]";
+      else c_swap = "#[fg=colour245]";
+
+      printf "%sCPU %d%% #[fg=colour242]| %sRAM %d%% #[fg=colour242]| %sSWAP %d%% #[fg=colour242]| #[fg=colour82,bold]%s #[fg=colour242]| #[fg=colour214,bold]%s\n",
+             c_cpu, cpu_pct, c_ram, ram_pct, c_swap, swap_pct, dl_str, ul_str;
     } else {
-      printf "CPU %d%% | RAM %d%% | %s | %s\n", cpu_pct, ram_pct, dl_str, ul_str;
+      printf "CPU %d%% | RAM %d%% | SWAP %d%% | %s | %s\n", cpu_pct, ram_pct, swap_pct, dl_str, ul_str;
     }
   }
 '
 """
 
 TMUX_CONF = r"""
-# GCP-TMUX-STYLE-V11: high-contrast dark footer, 1s refresh, CPU/RAM/Net monitor, dynamic build pills & shortcuts
+# GCP-TMUX-STYLE-V12: high-contrast dark footer, 1s refresh, CPU/RAM/Swap/Net monitor, dynamic build pills & shortcuts
 set -g mouse on
 set -g set-clipboard on
 bind-key m set-option -g mouse
@@ -122,7 +138,7 @@ set -g status-left-length 60
 set -g status-left "#[bg=colour39,fg=colour232,bold] #{?@build_icon,#{@build_icon},⚙} #{?@build_label,#{@build_label},BUILD} #[bg=colour238,fg=colour255,bold] #{?@build_detail,#{@build_detail},#W} #[bg=colour235] "
 set -g window-status-current-format ""
 set -g window-status-format ""
-set -g status-right-length 160
+set -g status-right-length 180
 set -g status-right "#[fg=colour245]Detach #[fg=colour82,bold]Ctrl+b d #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b "
 """
 
@@ -154,10 +170,10 @@ def net_speed_setup_cmd() -> str:
     """Shell snippet installing the net-speed helper and tmux styling."""
     net_b64 = base64.b64encode(NET_SPEED_SCRIPT.encode()).decode()
     tmux_b64 = base64.b64encode(TMUX_CONF.encode()).decode()
-    return f"""if ! grep -q 'GCP-NET-SPEED-V4' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
+    return f"""if ! grep -q 'GCP-NET-SPEED-V5' /usr/local/bin/vm_net_speed.sh 2>/dev/null; then
   printf '%s' '{net_b64}' | base64 -d | sudo tee /usr/local/bin/vm_net_speed.sh >/dev/null && sudo chmod +x /usr/local/bin/vm_net_speed.sh
 fi
-if ! grep -q 'GCP-TMUX-STYLE-V11' /etc/tmux.conf 2>/dev/null; then
+if ! grep -q 'GCP-TMUX-STYLE-V12' /etc/tmux.conf 2>/dev/null; then
   sudo touch /etc/tmux.conf 2>/dev/null || true
   sudo sed -i '/# GCP Build Farm:/,$d;/# GCP-TMUX-STYLE-V/,$d' /etc/tmux.conf 2>/dev/null || true
   printf '%s' '{tmux_b64}' | base64 -d | sudo tee -a /etc/tmux.conf >/dev/null 2>&1 || true
@@ -176,7 +192,7 @@ tmux set-option -g status-left-length 60 2>/dev/null || true
 tmux set-option -g status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_icon,#{{@build_icon}},⚙}} #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour238,fg=colour255,bold] #{{?@build_detail,#{{@build_detail}},#W}} #[bg=colour235] ' 2>/dev/null || true
 tmux set-window-option -g window-status-current-format '' 2>/dev/null || true
 tmux set-window-option -g window-status-format '' 2>/dev/null || true
-tmux set-option -g status-right-length 160 2>/dev/null || true
+tmux set-option -g status-right-length 180 2>/dev/null || true
 tmux set-option -g status-right '#[fg=colour245]Detach #[fg=colour82,bold]Ctrl+b d #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 tmux set-option -u -t rom-build mouse 2>/dev/null || true
 tmux set-option -t rom-build history-limit 50000 2>/dev/null || true
@@ -188,7 +204,7 @@ tmux set-window-option -t rom-build window-status-format '' 2>/dev/null || true
 if ! tmux show-option -t rom-build status-left 2>/dev/null | grep -q 'bg=colour'; then
   tmux set-option -t rom-build status-left '#[bg=colour39,fg=colour232,bold] #{{?@build_icon,#{{@build_icon}},⚙}} #{{?@build_label,#{{@build_label}},BUILD}} #[bg=colour238,fg=colour255,bold] #{{?@build_detail,#{{@build_detail}},#W}} #[bg=colour235] ' 2>/dev/null || true
 fi
-tmux set-option -t rom-build status-right-length 160 2>/dev/null || true
+tmux set-option -t rom-build status-right-length 180 2>/dev/null || true
 tmux set-option -t rom-build status-right '#[fg=colour245]Detach #[fg=colour82,bold]Ctrl+b d #[fg=colour242]| #(/usr/local/bin/vm_net_speed.sh --tmux) #[fg=colour242]| #[fg=colour117]#h #[fg=colour252]%H:%M %d-%b ' 2>/dev/null || true
 """
 
@@ -309,6 +325,28 @@ WantedBy=multi-user.target
         return True
     print(f">>> Warning: could not enable watchdog: {(res.stderr or res.stdout).strip()}")
     return False
+
+
+def ensure_and_report_swap(vm: dict, mount_point: str) -> None:
+    """Activate existing swapfile on mount or root if inactive, and report active swap."""
+    print(">>> Checking and activating swap memory...", end="", flush=True)
+    q_mp = shlex.quote(mount_point)
+    cmd = (
+        f"for sw in {q_mp}/swapfile /swapfile; do "
+        "if [ -f \"$sw\" ] && ! grep -q \"$sw\" /proc/swaps 2>/dev/null; then "
+        "sudo chmod 600 \"$sw\" 2>/dev/null || true; "
+        "sudo swapon \"$sw\" 2>/dev/null || { sudo mkswap \"$sw\" 2>/dev/null && sudo swapon \"$sw\" 2>/dev/null; } || true; "
+        "fi; done; "
+        "swapon --show=NAME,SIZE --noheadings 2>/dev/null"
+    )
+    res = vm_exec(vm, cmd, check=False, timeout=20)
+    print(" Done.", flush=True)
+    lines = [ln.strip() for ln in (res.stdout or "").splitlines() if ln.strip()]
+    if lines:
+        summary = ", ".join(f"{parts[1]} ({parts[0]})" if len(parts := ln.split()) >= 2 else ln for ln in lines)
+        print(f">>> Swap Memory successfully active: {BOLD}{summary}{NC}")
+    else:
+        print(f">>> Swap Memory: No swapfile active (pure RAM mode).")
 
 
 def _runner_script(vm: dict, command: str, branch: str, mount_point: str, variant: str,
@@ -678,19 +716,9 @@ def dispatch_build(
         print(">>> Error: Could not prepare the build disk.")
         return False
 
-    # Auto-activate existing swapfile on build disk or root disk if inactive (in background)
-    vm_exec(
-        vm,
-        f"( for sw in {shlex.quote(mount_point)}/swapfile /swapfile; do "
-        "if [ -f \"$sw\" ] && ! grep -q \"$sw\" /proc/swaps 2>/dev/null; then "
-        "sudo chmod 600 \"$sw\" 2>/dev/null || true; "
-        "sudo swapon \"$sw\" 2>/dev/null || { sudo mkswap \"$sw\" 2>/dev/null && sudo swapon \"$sw\" 2>/dev/null; } || true; "
-        "fi; done ) >/dev/null 2>&1 &",
-        check=False, timeout=10,
-    )
-
-    # 5. Refresh the watchdog and push guest tools before launching.
+    # 5. Refresh the watchdog and ensure swap memory is active and reported.
     deploy_watchdog(vm)
+    ensure_and_report_swap(vm, mount_point)
     _general_disk_data_prompt(
         vm=vm,
         target_disk=target_disk,

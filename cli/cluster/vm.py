@@ -38,26 +38,18 @@ def submenu_select_vm(vms: list[dict], project: str) -> dict | None:
                 continue
             return None
 
-        online_vms = [v for v in vms if v["status"] == "RUNNING"]
-        offline_vms = [v for v in vms if v["status"] != "RUNNING"]
-        all_vms = online_vms + offline_vms
+        all_vms = sorted(vms, key=lambda v: v["name"])
+        current_active = get_active_vm().get("instance", "")
 
         print(f" Choose an instance to manage / build on:\n")
-        if online_vms:
-            print(f" {GREEN}{BOLD}Online VMs:{NC}")
-            for idx, v in enumerate(online_vms, 1):
-                ip_str = f"IP: {v.get('ip', 'None')}"
-                disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
-                print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {GREEN}{v['status']}{NC} {ip_str}")
-                print(f"       {CYAN}{disks_str}{NC}")
-
-        if offline_vms:
-            start_idx = len(online_vms) + 1
-            print(f"\n {RED}{BOLD}Offline VMs:{NC}")
-            for idx, v in enumerate(offline_vms, start_idx):
-                disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
-                print(f"   {YELLOW}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {RED}{v['status']}{NC}")
-                print(f"       {CYAN}{disks_str}{NC}")
+        for idx, v in enumerate(all_vms, 1):
+            is_active = (v["name"] == current_active)
+            status_color = GREEN if v["status"] == "RUNNING" else RED
+            active_badge = f" {GREEN}{BOLD}[ACTIVE]{NC}" if is_active else ""
+            ip_str = f"IP: {v.get('ip', 'None')}" if v["status"] == "RUNNING" else ""
+            disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
+            print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {status_color}{v['status']:<10}{NC}{active_badge} {ip_str}".rstrip())
+            print(f"       {CYAN}{disks_str}{NC}")
 
         print(f"\n   {YELLOW}r){NC} Reload / Refresh")
         print(f"   {RED}0 / q){NC} Cancel / Back")
@@ -206,17 +198,21 @@ def submenu_delete_vm(vms: list[dict], project: str) -> bool:
             pause()
             return False
 
+        all_vms = sorted(vms, key=lambda v: v["name"])
+        current_active = get_active_vm().get("instance", "")
         print(" Available VMs to delete:\n")
-        for idx, v in enumerate(vms, 1):
+        for idx, v in enumerate(all_vms, 1):
+            is_active = (v["name"] == current_active)
+            active_badge = f" {GREEN}{BOLD}[ACTIVE]{NC}" if is_active else ""
             status_color = GREEN if v["status"] == "RUNNING" else RED
-            print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {status_color}{v['status']}{NC}")
+            print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {status_color}{v['status']}{NC}{active_badge}")
             print(f"      Attached disks: {CYAN}{', '.join(v['disks'])}{NC}")
 
         print(f"\n   {YELLOW}r){NC} Reload / Refresh")
         print(f"   {RED}0 / q){NC} Cancel / Back")
         print_divider()
 
-        choice = read_input(f" Select VM 1-{len(vms)}, r or 0/q: ").strip().lower()
+        choice = read_input(f" Select VM 1-{len(all_vms)}, r or 0/q: ").strip().lower()
         if choice in ("0", "q", "quit", "exit"):
             return False
         if choice in ("r", "reload", "refresh"):
@@ -224,13 +220,13 @@ def submenu_delete_vm(vms: list[dict], project: str) -> bool:
             continue
         try:
             c_idx = int(choice)
-            if not (1 <= c_idx <= len(vms)):
+            if not (1 <= c_idx <= len(all_vms)):
                 return False
         except ValueError:
             return False
         break
 
-    target = vms[c_idx - 1]
+    target = all_vms[c_idx - 1]
     target_name = target["name"]
     target_zone = target["zone"]
     target_region = get_region_from_zone(target_zone)
@@ -339,16 +335,20 @@ def submenu_toggle_power(vms: list[dict], project: str):
                 continue
             return
 
+        all_vms = sorted(vms, key=lambda v: v["name"])
+        current_active = get_active_vm().get("instance", "")
         print(" Select VM to toggle power:\n")
-        for idx, v in enumerate(vms, 1):
+        for idx, v in enumerate(all_vms, 1):
+            is_active = (v["name"] == current_active)
+            active_badge = f" {GREEN}{BOLD}[ACTIVE]{NC}" if is_active else ""
             status_color = GREEN if v["status"] == "RUNNING" else RED
             action_hint = f"{RED}[Will Stop]{NC}" if v["status"] == "RUNNING" else f"{GREEN}[Will Start]{NC}"
-            print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {status_color}{v['status']:<10}{NC} {action_hint}")
+            print(f"   {GREEN}{idx}){NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {status_color}{v['status']:<10}{NC} {action_hint}{active_badge}")
 
         print(f"\n   {YELLOW}r){NC} Reload / Refresh")
         print(f"   {RED}0 / q){NC} Cancel / Back")
         print_divider()
-        pwr_num = read_input(f" Enter VM number 1-{len(vms)}, r or 0/q [default: 1]: ").strip().lower()
+        pwr_num = read_input(f" Enter VM number 1-{len(all_vms)}, r or 0/q [default: 1]: ").strip().lower()
         if not pwr_num:
             pwr_num = "1"
         if pwr_num in ("0", "q", "quit", "exit"):
@@ -356,8 +356,8 @@ def submenu_toggle_power(vms: list[dict], project: str):
         if pwr_num in ("r", "reload", "refresh"):
             vms = discover_instances(project, refresh=True)
             continue
-        if pwr_num.isdigit() and 1 <= int(pwr_num) <= len(vms):
-            target_v = vms[int(pwr_num) - 1]
+        if pwr_num.isdigit() and 1 <= int(pwr_num) <= len(all_vms):
+            target_v = all_vms[int(pwr_num) - 1]
             target_dict = {
                 "instance": target_v["name"],
                 "zone": target_v["zone"],
@@ -393,31 +393,22 @@ def run_cluster_menu() -> dict:
         print(f"{BOLD}             GCP BUILD CLUSTER - VM SELECTOR & MANAGER           {NC}")
         print_divider()
 
-        online_vms = [v for v in vms if v["status"] == "RUNNING"]
-        offline_vms = [v for v in vms if v["status"] != "RUNNING"]
+        all_vms = sorted(vms, key=lambda v: v["name"])
+        current_active = vm.get("instance", "")
 
         if count == 0:
             print(f" Build VMs:\n")
             print(f"   {YELLOW}(No VMs currently found in project {project}){NC}\n")
         else:
-            print(f" {GREEN}{BOLD}Online VMs ({len(online_vms)}):{NC}")
-            if not online_vms:
-                print(f"   {YELLOW}(No VMs currently online){NC}")
-            else:
-                for v in online_vms:
-                    ip_str = f"IP: {v.get('ip', 'None')}"
-                    disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
-                    print(f"   {GREEN}•{NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {GREEN}{v['status']:<9}{NC} {ip_str}")
-                    print(f"     {CYAN}{disks_str}{NC}")
-
-            print(f"\n {RED}{BOLD}Offline VMs ({len(offline_vms)}):{NC}")
-            if not offline_vms:
-                print(f"   {YELLOW}(No VMs currently offline){NC}")
-            else:
-                for v in offline_vms:
-                    disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
-                    print(f"   {RED}•{NC} {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {RED}{v['status']:<9}{NC}")
-                    print(f"     {CYAN}{disks_str}{NC}")
+            print(f" {BOLD}Build VMs ({count}):{NC}")
+            for v in all_vms:
+                is_active = (v["name"] == current_active)
+                status_color = GREEN if v["status"] == "RUNNING" else RED
+                active_badge = f" {GREEN}{BOLD}[ACTIVE]{NC}" if is_active else ""
+                ip_str = f"IP: {v.get('ip', 'None')}" if v["status"] == "RUNNING" else ""
+                disks_str = f"Disks: {', '.join(v['disks'])}" if v.get('disks') else "Disks: none"
+                print(f"   • {BOLD}{v['name']:<18}{NC} {v['zone']:<13} {v['machine_type']:<15} {status_color}{v['status']:<9}{NC}{active_badge} {ip_str}".rstrip())
+                print(f"     {CYAN}{disks_str}{NC}")
             print()
 
         print_thin_divider()
