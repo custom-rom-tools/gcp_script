@@ -1,25 +1,36 @@
 Subject: [PATCH] SystemUI: Fix TextInterpolator clock crash on digit mutation
 
-In TextInterpolator.kt, require(baseGlyphId == targetGlyphId) throws
-IllegalArgumentException whenever digits change (e.g. from 0 to 1),
-crashing SystemUI on lockscreen time update.
+In TextInterpolator.kt, avoid throwing IllegalArgumentException when digits change
+during lockscreen time update. In Android 16, avoid throwing when glyphCount or
+glyphId differs during text layout update.
 
 ---
- .../animation/TextInterpolator.kt             | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
+ .../animation/TextInterpolator.kt             | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
 
 diff --git a/packages/SystemUI/animation/src/com/android/systemui/animation/TextInterpolator.kt b/packages/SystemUI/animation/src/com/android/systemui/animation/TextInterpolator.kt
 --- a/packages/SystemUI/animation/src/com/android/systemui/animation/TextInterpolator.kt
 +++ b/packages/SystemUI/animation/src/com/android/systemui/animation/TextInterpolator.kt
-@@ -370,8 +370,8 @@
-         for (i in 0 until numGlyphs) {
-             val baseGlyphId = baseRun.glyphs[i]
-             val targetGlyphId = targetRun.glyphs[i]
--            require(baseGlyphId == targetGlyphId) {
--                "The new layout has different glyph ID at $i"
-+            if (baseGlyphId != targetGlyphId) {
-+                return
-             }
-             val numInterp = interp.points.size
-         }
+@@ -500,17 +500,15 @@ class TextInterpolator(
+ 
+         lines.zip(layoutResult.lines) { line, runs ->
+             line.runs.zip(runs) { lineRun, newRun ->
+-                require(newRun.glyphs.glyphCount() == lineRun.glyphIds.size) {
+-                    "The new layout has different glyph count."
++                if (newRun.glyphs.glyphCount() != lineRun.glyphIds.size) {
++                    return
+                 }
+ 
+                 lineRun.fontRuns.forEach { run ->
+                     val newFont = newRun.glyphs.getFont(run.start)
+                     for (i in run.start until run.end) {
+-                        require(
+-                            newRun.glyphs.getGlyphId(run.start) == lineRun.glyphIds[run.start]
+-                        ) {
+-                            "The new layout has different glyph ID at ${run.start}"
++                        if (newRun.glyphs.getGlyphId(run.start) != lineRun.glyphIds[run.start]) {
++                            return
+                         }
+                         require(newFont === newRun.glyphs.getFont(i)) {
+                             "The new layout has different font run." +
 -- 
