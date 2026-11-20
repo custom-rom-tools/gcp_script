@@ -15,6 +15,7 @@ import getpass
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import tempfile

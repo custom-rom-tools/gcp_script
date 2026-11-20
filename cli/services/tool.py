@@ -6,6 +6,7 @@ host-environment setup and idle-watchdog deployment.
 
 from __future__ import annotations
 
+import base64
 import random
 import shlex
 from pathlib import Path
