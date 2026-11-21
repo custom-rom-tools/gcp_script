@@ -232,7 +232,7 @@ fi
 if [ -n "$active" ]; then
     echo BUILD_ALREADY_RUNNING
     echo "$active"
-    for f in /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status; do
+    for f in /mnt/rom/build.status /mnt/recovery/build.status; do
         [ -f "$f" ] && echo "$f: $(cat "$f")"
     done
 else

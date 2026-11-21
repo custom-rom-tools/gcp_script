@@ -896,7 +896,7 @@ def start_vm(vm: dict) -> bool:
         return False
 
     ip = get_vm_ip(vm)
-    res = vm_exec(vm, 'for d in /mnt/a16 /mnt/a17 /mnt/recovery; do mountpoint -q "$d" && echo "$d"; done',
+    res = vm_exec(vm, 'for d in /mnt/rom /mnt/recovery; do mountpoint -q "$d" && echo "$d"; done',
                   check=False, timeout=15)
     mounts = [line.strip() for line in (res.stdout or "").splitlines() if line.strip()]
     print("")
@@ -910,7 +910,7 @@ def start_vm(vm: dict) -> bool:
         print("    It is mounted automatically when a build starts (Disk Manager / build menu).")
     print("=" * 60)
     print("")
-    res = vm_exec(vm, "df -h / /mnt/a16 /mnt/a17 /mnt/recovery 2>/dev/null; free -h",
+    res = vm_exec(vm, "df -h / /mnt/rom /mnt/recovery 2>/dev/null; free -h",
                   check=False, timeout=15)
     if res.stdout:
         print(res.stdout)

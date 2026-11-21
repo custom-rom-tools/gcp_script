@@ -18,8 +18,23 @@ from cli.base import is_interactive, read_input
 from cli.services.vm import is_vm_running, vm_exec, vm_pull
 from cli.services.monitor import get_active_log_path, list_available_build_logs
 
-MOUNTS = ("/mnt/a16", "/mnt/a17", "/mnt/recovery")
-DOWNLOAD_DIR = Path.home() / "Downloads"
+def _resolve_download_dir() -> Path:
+    p = Path.home() / "Downloads"
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        test = p / ".write_probe"
+        test.touch()
+        test.unlink(missing_ok=True)
+        return p
+    except (PermissionError, OSError):
+        fallback = Path.home() / ".gcp_farm" / "downloads"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+MOUNTS = ("/mnt/rom", "/mnt/recovery")
+DOWNLOAD_DIR = _resolve_download_dir()
+LOCAL_LOGS_DIR = Path.home() / ".gcp_farm" / "logs"
 
 PATTERNS = {
     "rom": ("*.zip",),
@@ -236,6 +251,15 @@ def _download_single_log(vm: dict, remote: str) -> bool:
             print(f"    Clean log: {clean} (ANSI/CR removed)")
     except OSError:
         pass
+
+    try:
+        LOCAL_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.copy2(local, LOCAL_LOGS_DIR / local.name)
+        if clean.exists():
+            shutil.copy2(clean, LOCAL_LOGS_DIR / clean.name)
+    except OSError:
+        pass
     print("=" * 60)
     return True
 
@@ -251,7 +275,7 @@ def _download_log(vm: dict, log_path: str = "") -> bool:
             available = [remote]
 
     if not available:
-        print(">>> No build logs found on VM (/mnt/a16, /mnt/a17, or /mnt/recovery).")
+        print(">>> No build logs found on VM (/mnt/rom or /mnt/recovery).")
         local_logs = sorted(DOWNLOAD_DIR.glob("build_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
         if local_logs:
             print(f"\n>>> Found {len(local_logs)} previously downloaded log(s) in ~/Downloads:")
@@ -298,7 +322,7 @@ def _download_log(vm: dict, log_path: str = "") -> bool:
     return False
 
 
-def auto_download_failed_log(vm: dict, mount_point: str = "/mnt/a16") -> str:
+def auto_download_failed_log(vm: dict, mount_point: str = "/mnt/rom") -> str:
     """Check if the build failed and auto-pull the failure log to ~/Downloads."""
     try:
         st_file = f"{mount_point}/build.status"
@@ -326,6 +350,12 @@ def auto_download_failed_log(vm: dict, mount_point: str = "/mnt/a16") -> str:
                     produced.replace(local)
                 except OSError:
                     pass
+            try:
+                LOCAL_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+                import shutil
+                shutil.copy2(local, LOCAL_LOGS_DIR / local.name)
+            except OSError:
+                pass
             print(f"Done ({_human_size(local.stat().st_size)})")
             print(f">>> [SAVED] Failure log saved to: {local}")
             return str(local)
@@ -371,7 +401,7 @@ def download_artifacts(vm: dict, artifact_type: str = "rom", log_path: str = "",
     if not files:
         print(">>> No "
               f"{artifact_type} artifacts found in workspace out/target/product "
-              "folders on /mnt/a16, /mnt/a17 or /mnt/recovery.")
+              "folders on /mnt/rom or /mnt/recovery.")
         return False
 
     chosen = _choose_artifacts(files, artifact_type, selection)

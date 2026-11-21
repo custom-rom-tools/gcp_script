@@ -126,8 +126,7 @@ def sync_links_from_vm(vm: dict) -> list[str]:
         try:
             cmd = (
                 "cat ~/.upload_links.log "
-                "/mnt/a16/.upload_links.log "
-                "/mnt/a17/.upload_links.log "
+                "/mnt/rom/.upload_links.log "
                 "/mnt/recovery/.upload_links.log "
                 "/tmp/.upload_links.log 2>/dev/null || true"
             )

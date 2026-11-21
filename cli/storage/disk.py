@@ -28,11 +28,9 @@ def submenu_disk_manager(vm: dict):
         rec = DISK_PRESETS["recovery"]
 
         print(f" {BOLD}[CREATE & LINK]{NC}")
-        print(f"  {GREEN}1){NC} Create General Shared Disk "
-              f"({general['size_gb']}GB - all ROMs & recovery)")
-        print(f"  {GREEN}2){NC} Create A16 Disk ({a16['size_gb']}GB - dedicated /mnt/a16)")
-        print(f"  {GREEN}3){NC} Create A17 Disk ({a17['size_gb']}GB - dedicated /mnt/a17)")
-        print(f"  {GREEN}4){NC} Create Recovery Disk "
+        print(f"  {GREEN}1){NC} Create ROM & Kernel Disk "
+              f"({general['size_gb']}GB - dedicated /mnt/rom)")
+        print(f"  {GREEN}2){NC} Create Recovery Disk "
               f"({rec['size_gb']}GB - dedicated /mnt/recovery)")
         print()
         print(f" {BOLD}[ATTACH / DETACH / MOUNT / FORMAT]{NC}")
@@ -110,7 +108,7 @@ def submenu_disk_manager(vm: dict):
                 continue
             res = vm_exec(
                 vm,
-                "df -h / /mnt/a16 /mnt/a17 /mnt/recovery 2>/dev/null; echo ''; "
+                "df -h / /mnt/rom /mnt/recovery 2>/dev/null; echo ''; "
                 "lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT /dev/sd* 2>/dev/null || true; "
                 "echo ''; free -h; swapon --show 2>/dev/null",
                 check=False,

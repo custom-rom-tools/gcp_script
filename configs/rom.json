@@ -11,9 +11,9 @@
         "lunch_prefix": "lineage",
         "lunch_suffix": "bp4a",
         "fallback_lunch_without_suffix": true,
-        "work_dir": "/mnt/a16/evox",
-        "disk_mount": "/mnt/a16",
-        "disk_name": "gcp-rom-a16-disk",
+        "work_dir": "/mnt/rom/evox",
+        "disk_mount": "/mnt/rom",
+        "disk_name": "gcp-rom-disk",
         "upload_subdir_suffix": "EvolutionX/16",
         "devices": {
           "RMX2061": {
@@ -40,9 +40,9 @@
         "lunch_prefix": "lineage",
         "lunch_suffix": "cp2a",
         "fallback_lunch_without_suffix": true,
-        "work_dir": "/mnt/a17/evox",
-        "disk_mount": "/mnt/a17",
-        "disk_name": "gcp-rom-a17-disk",
+        "work_dir": "/mnt/rom/evox",
+        "disk_mount": "/mnt/rom",
+        "disk_name": "gcp-rom-disk",
         "upload_subdir_suffix": "EvolutionX/17",
         "devices": {
           "RMX2061": {
@@ -76,9 +76,9 @@
         "lunch_prefix": "lineage",
         "lunch_suffix": "bp4a",
         "fallback_lunch_without_suffix": false,
-        "work_dir": "/mnt/a16/los",
-        "disk_mount": "/mnt/a16",
-        "disk_name": "gcp-rom-a16-disk",
+        "work_dir": "/mnt/rom/los",
+        "disk_mount": "/mnt/rom",
+        "disk_name": "gcp-rom-disk",
         "upload_subdir_suffix": "LineageOS/16",
         "devices": {
           "RMX2061": {
@@ -105,9 +105,9 @@
         "lunch_prefix": "lineage",
         "lunch_suffix": "",
         "fallback_lunch_without_suffix": false,
-        "work_dir": "/mnt/a17/los",
-        "disk_mount": "/mnt/a17",
-        "disk_name": "gcp-rom-a17-disk",
+        "work_dir": "/mnt/rom/los",
+        "disk_mount": "/mnt/rom",
+        "disk_name": "gcp-rom-disk",
         "upload_subdir_suffix": "LineageOS/17",
         "devices": {
           "RMX2061": {
@@ -141,9 +141,9 @@
         "lunch_prefix": "lineage",
         "lunch_suffix": "bp4a",
         "fallback_lunch_without_suffix": false,
-        "work_dir": "/mnt/a16/lunaris",
-        "disk_mount": "/mnt/a16",
-        "disk_name": "gcp-rom-a16-disk",
+        "work_dir": "/mnt/rom/lunaris",
+        "disk_mount": "/mnt/rom",
+        "disk_name": "gcp-rom-disk",
         "upload_subdir_suffix": "Lunaris/16",
         "devices": {
           "RMX2061": {

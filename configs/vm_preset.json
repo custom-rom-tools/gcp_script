@@ -14,23 +14,32 @@
       "size_gb": 500,
       "type": "pd-balanced",
       "device_name": "rom-general",
-      "role": "General Shared Disk (Fits GCP 500GB SSD free-tier limit, auto-mounts on demand)"
+      "default_mount": "/mnt/rom",
+      "role": "General Shared ROM & Kernel Disk (/mnt/rom)"
+    },
+    "rom": {
+      "name": "gcp-rom-disk",
+      "size_gb": 500,
+      "type": "pd-balanced",
+      "device_name": "rom-disk",
+      "default_mount": "/mnt/rom",
+      "role": "Dedicated ROM & Kernel Storage (/mnt/rom)"
     },
     "rom_a16": {
       "name": "gcp-rom-a16-disk",
       "size_gb": 500,
       "type": "pd-balanced",
       "device_name": "rom-a16",
-      "default_mount": "/mnt/a16",
-      "role": "Dedicated Android 16 Storage (/mnt/a16)"
+      "default_mount": "/mnt/rom",
+      "role": "ROM & Kernel Storage (/mnt/rom)"
     },
     "rom_a17": {
       "name": "gcp-rom-a17-disk",
       "size_gb": 500,
       "type": "pd-balanced",
       "device_name": "rom-a17",
-      "default_mount": "/mnt/a17",
-      "role": "Dedicated Android 17 Storage (/mnt/a17)"
+      "default_mount": "/mnt/rom",
+      "role": "ROM & Kernel Storage (/mnt/rom)"
     },
     "recovery": {
       "name": "gcp-recovery-disk",
