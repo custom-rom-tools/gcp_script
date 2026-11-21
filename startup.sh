@@ -5,43 +5,39 @@
 # Runs automatically by google-startup-scripts.service at every instance boot.
 # ==============================================================================
 
-# Disks to dedicated mountpoints mapping (boot-time mounting is ONLY for
-# ROM/recovery-specific disks; general shared disks mount on demand at build time)
-declare -A DISK_MAP=(
-    ["google-rom-a16"]="/mnt/a16"
-    ["google-rom-a17"]="/mnt/a17"
-    ["google-rom-recovery"]="/mnt/recovery"
-)
-
-# 1. Mount recognized ROM disks to dedicated paths
-for id in "${!DISK_MAP[@]}"; do
-    dev="/dev/disk/by-id/$id"
+# 1. Mount Recovery disk to /mnt/recovery if attached
+for rec_id in google-recovery-disk google-rom-recovery; do
+    dev="/dev/disk/by-id/$rec_id"
     if [ -b "$dev" ]; then
-        mp="${DISK_MAP[$id]}"
-        mkdir -p "$mp"
-        if ! mountpoint -q "$mp"; then
-            mount -o discard,defaults,noatime,nofail "$dev" "$mp" 2>/dev/null || true
+        mkdir -p /mnt/recovery
+        if ! mountpoint -q /mnt/recovery; then
+            mount -o discard,defaults,noatime,nofail "$dev" /mnt/recovery 2>/dev/null || true
         fi
         resize2fs "$dev" 2>/dev/null || true
+        break
     fi
 done
 
-# Also mount general disk or any attached secondary build disk if not yet mounted
-if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then
-    for gen_dev in /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-*; do
+# 2. Mount ROM disk to /mnt/rom if attached
+for rom_id in google-rom-disk google-rom-general google-rom-a16 google-rom-a17; do
+    dev="/dev/disk/by-id/$rom_id"
+    if [ -b "$dev" ]; then
+        mkdir -p /mnt/rom
+        if ! mountpoint -q /mnt/rom; then
+            mount -o discard,defaults,noatime,nofail "$dev" /mnt/rom 2>/dev/null || true
+        fi
+        resize2fs "$dev" 2>/dev/null || true
+        break
+    fi
+done
+
+# Fallback: if secondary disk /dev/sdb is attached and neither /mnt/rom nor /mnt/recovery is mounted
+if ! mountpoint -q /mnt/rom && ! mountpoint -q /mnt/recovery; then
+    for gen_dev in /dev/disk/by-id/google-rom-* /dev/sdb; do
         if [ -b "$gen_dev" ]; then
-            tmp_mp="/mnt/a16"
-            mkdir -p "$tmp_mp"
-            mount -o discard,defaults,noatime,nofail "$gen_dev" "$tmp_mp" 2>/dev/null || true
-            if mountpoint -q "$tmp_mp"; then
-                if [ -f "$tmp_mp/.last_mount" ]; then
-                    target_mp=$(cat "$tmp_mp/.last_mount" 2>/dev/null | tr -d '\r\n ')
-                    if [ -n "$target_mp" ] && [ "$target_mp" != "$tmp_mp" ]; then
-                        umount "$tmp_mp" 2>/dev/null || true
-                        mkdir -p "$target_mp"
-                        mount -o discard,defaults,noatime,nofail "$gen_dev" "$target_mp" 2>/dev/null || true
-                    fi
-                fi
+            mkdir -p /mnt/rom
+            mount -o discard,defaults,noatime,nofail "$gen_dev" /mnt/rom 2>/dev/null || true
+            if mountpoint -q /mnt/rom; then
                 break
             fi
         fi
@@ -79,7 +75,7 @@ is_busy() {
     fi
 
     local build_procs
-    build_procs=$(pgrep -f '[s]oong_ui|[s]oong_build|[n]inja|[c]kati|[s]iso|/mnt/a17/evox/build/soong/bin/m |[r]om_build\.sh|[g]cp_build_script|repo/main\.py|repo/repo|/usr/local/bin/repo|[u]pload\.py|[s]ignapk|[z]ipalign|[g]it-remote-https|[a]ria2c|[r]clone|[c]lang|[r]ustc|[j]avac|[j]ava|[k]otlinc|[m]etalava|[a]apt2|[s]oong_zip|/d8([[:space:]]|$)|/r8([[:space:]]|$)|/bin/mka' 2>/dev/null | wc -l)
+    build_procs=$(pgrep -f '[s]oong_ui|[s]oong_build|[n]inja|[c]kati|[s]iso|[b]uild/soong/bin/m|[r]om_build\.sh|[g]cp_build_script|repo/main\.py|repo/repo|/usr/local/bin/repo|[u]pload\.py|[s]ignapk|[z]ipalign|[g]it-remote-https|[a]ria2c|[r]clone|[c]lang|[r]ustc|[j]avac|[j]ava|[k]otlinc|[m]etalava|[a]apt2|[s]oong_zip|/d8([[:space:]]|$)|/r8([[:space:]]|$)|/bin/mka' 2>/dev/null | wc -l)
     if [ "$build_procs" -gt 0 ]; then
         echo "BUILD_ACTIVE ($build_procs build processes running)"
         return 0

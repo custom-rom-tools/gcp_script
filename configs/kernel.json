@@ -7,9 +7,9 @@
     "versions": {
       "16": {
         "name": "Android 16",
-        "work_dir": "/mnt/a16/evox",
-        "disk_mount": "/mnt/a16",
-        "disk_name": "gcp-rom-a16-disk",
+        "work_dir": "/mnt/rom/evox",
+        "disk_mount": "/mnt/rom",
+        "disk_name": "gcp-rom-disk",
         "rom_manifest_url": "https://github.com/Evolution-X/manifest",
         "rom_manifest_branch": "bka",
         "lunch_prefix": "lineage",
@@ -36,9 +36,9 @@
       },
       "17": {
         "name": "Android 17",
-        "work_dir": "/mnt/a17/evox",
-        "disk_mount": "/mnt/a17",
-        "disk_name": "gcp-rom-a17-disk",
+        "work_dir": "/mnt/rom/evox",
+        "disk_mount": "/mnt/rom",
+        "disk_name": "gcp-rom-disk",
         "rom_manifest_url": "https://github.com/Evolution-X/manifest",
         "rom_manifest_branch": "cnb",
         "lunch_prefix": "lineage",

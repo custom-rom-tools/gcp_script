@@ -130,59 +130,50 @@ chmod 700 "$HOME/.ssh"
 echo "============================================================"
 echo " [4/5] Checking Secondary ROM Storage Disk (Optional)..."
 echo "============================================================"
-# Boot/setup mounts ONLY ROM/recovery-specific disks.
-# A shared general disk (google-rom-general) stays unmounted until a build starts.
-SPECIFIC_DISKS=(
-    "/dev/disk/by-id/google-rom-a16:/mnt/a16"
-    "/dev/disk/by-id/google-rom-a17:/mnt/a17"
-    "/dev/disk/by-id/google-rom-recovery:/mnt/recovery"
-)
+# Mount ROM disk to /mnt/rom and Recovery disk to /mnt/recovery.
 FOUND_SECONDARY=0
 
-for entry in "${SPECIFIC_DISKS[@]}"; do
-    ROM_DISK="${entry%%:*}"
-    TARGET_MP="${entry#*:}"
-    if [ -b "$ROM_DISK" ]; then
+# 1. Recovery Disk -> /mnt/recovery
+for rec_id in google-recovery-disk google-rom-recovery; do
+    REC_DEV="/dev/disk/by-id/$rec_id"
+    if [ -b "$REC_DEV" ]; then
         FOUND_SECONDARY=1
-        echo "Detected specific ROM disk: $ROM_DISK -> $TARGET_MP"
-        if ! blkid "$ROM_DISK" 2>/dev/null | grep -q 'TYPE="ext4"'; then
-            echo "Formatting $ROM_DISK with ext4..."
-            sudo mkfs.ext4 -m 1 -F "$ROM_DISK"
+        echo "Detected Recovery disk: $REC_DEV -> /mnt/recovery"
+        if ! blkid "$REC_DEV" 2>/dev/null | grep -q 'TYPE="ext4"'; then
+            echo "Formatting $REC_DEV with ext4..."
+            sudo mkfs.ext4 -m 1 -F "$REC_DEV"
         fi
-        sudo mkdir -p "$TARGET_MP"
-        if ! mountpoint -q "$TARGET_MP"; then
-            sudo mount -o discard,defaults,noatime,nofail "$ROM_DISK" "$TARGET_MP"
+        sudo mkdir -p /mnt/recovery
+        if ! mountpoint -q /mnt/recovery; then
+            sudo mount -o discard,defaults,noatime,nofail "$REC_DEV" /mnt/recovery
         fi
-        sudo resize2fs "$ROM_DISK" 2>/dev/null || true
-        sudo chown "$USER:$USER" "$TARGET_MP"
-        echo "Storage mounted successfully at $TARGET_MP (Pure 64GB RAM mode, swap disabled)."
+        sudo resize2fs "$REC_DEV" 2>/dev/null || true
+        sudo chown "$USER:$USER" /mnt/recovery
+        echo "Recovery storage mounted successfully at /mnt/recovery."
+        break
     fi
 done
 
-if [ -b "/dev/disk/by-id/google-rom-general" ]; then
-    FOUND_SECONDARY=1
-    echo "Detected general shared disk: /dev/disk/by-id/google-rom-general"
-    if ! blkid /dev/disk/by-id/google-rom-general 2>/dev/null | grep -q 'TYPE="ext4"'; then
-        echo "Formatting /dev/disk/by-id/google-rom-general with ext4..."
-        sudo mkfs.ext4 -m 1 -F /dev/disk/by-id/google-rom-general
-    fi
-    TARGET_MP="/mnt/a16"
-    sudo mkdir -p "$TARGET_MP"
-    if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then
-        sudo mount -o discard,defaults,noatime,nofail /dev/disk/by-id/google-rom-general "$TARGET_MP" 2>/dev/null || true
-        if [ -f "$TARGET_MP/.last_mount" ]; then
-            SAVED_MP=$(cat "$TARGET_MP/.last_mount" 2>/dev/null | tr -d '\r\n ')
-            if [ -n "$SAVED_MP" ] && [ "$SAVED_MP" != "$TARGET_MP" ]; then
-                sudo umount "$TARGET_MP" 2>/dev/null || true
-                sudo mkdir -p "$SAVED_MP"
-                sudo mount -o discard,defaults,noatime,nofail /dev/disk/by-id/google-rom-general "$SAVED_MP" 2>/dev/null || true
-                TARGET_MP="$SAVED_MP"
-            fi
+# 2. ROM & Kernel Disk -> /mnt/rom
+for rom_id in google-rom-disk google-rom-general google-rom-a16 google-rom-a17; do
+    ROM_DEV="/dev/disk/by-id/$rom_id"
+    if [ -b "$ROM_DEV" ]; then
+        FOUND_SECONDARY=1
+        echo "Detected ROM & Kernel disk: $ROM_DEV -> /mnt/rom"
+        if ! blkid "$ROM_DEV" 2>/dev/null | grep -q 'TYPE="ext4"'; then
+            echo "Formatting $ROM_DEV with ext4..."
+            sudo mkfs.ext4 -m 1 -F "$ROM_DEV"
         fi
-        sudo chown "$USER:$USER" "$TARGET_MP" 2>/dev/null || true
-        echo "General disk mounted at $TARGET_MP."
+        sudo mkdir -p /mnt/rom
+        if ! mountpoint -q /mnt/rom; then
+            sudo mount -o discard,defaults,noatime,nofail "$ROM_DEV" /mnt/rom
+        fi
+        sudo resize2fs "$ROM_DEV" 2>/dev/null || true
+        sudo chown "$USER:$USER" /mnt/rom
+        echo "ROM storage mounted successfully at /mnt/rom."
+        break
     fi
-fi
+done
 
 if [ "$FOUND_SECONDARY" -eq 0 ]; then
     echo "No secondary ROM disk attached at the moment."
@@ -435,8 +426,7 @@ fi
 echo "============================================================"
 echo " Verification:"
 echo "============================================================"
-df -h /
-df -h /mnt/a16 /mnt/a17 2>/dev/null || true
+df -h / /mnt/rom /mnt/recovery 2>/dev/null || true
 swapon --show
 ccache -s
 

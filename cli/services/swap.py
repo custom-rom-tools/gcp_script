@@ -13,7 +13,7 @@ import shlex
 
 from cli.services.vm import is_vm_running, vm_exec
 
-SWAP_PATHS = ("/swapfile", "/mnt/a16/swapfile", "/mnt/a17/swapfile", "/mnt/recovery/swapfile")
+SWAP_PATHS = ("/swapfile", "/mnt/rom/swapfile", "/mnt/recovery/swapfile")
 
 
 def get_swap_status(vm: dict) -> str:
@@ -117,7 +117,7 @@ def find_existing_swapfiles(vm: dict) -> list[dict]:
         "            if p: active.add(p[0])\n"
         "except Exception: pass\n"
         "cands = set(active)\n"
-        "cands.update(['/swapfile', '/mnt/a16/swapfile', '/mnt/a17/swapfile', '/mnt/recovery/swapfile'])\n"
+        "cands.update(['/swapfile', '/mnt/rom/swapfile', '/mnt/recovery/swapfile'])\n"
         "for p in glob.glob('/mnt/*/swapfile'): cands.add(p)\n"
         "res = []\n"
         "for p in sorted(cands):\n"

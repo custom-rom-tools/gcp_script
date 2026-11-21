@@ -36,7 +36,7 @@ is_busy() {
 
     # 1. Check for active ROM/recovery build, sync, packaging, or upload processes
     local build_procs
-    build_procs=$(pgrep -f '[s]oong_ui|[s]oong_build|[n]inja|[c]kati|[s]iso|/mnt/a17/evox/build/soong/bin/m |[r]om_build\.sh|[g]cp_build_script|repo/main\.py|repo/repo|/usr/local/bin/repo|[u]pload\.py|[s]ignapk|[z]ipalign|[g]it-remote-https|[a]ria2c|[r]clone|[c]lang|[r]ustc|[j]avac|[j]ava|[k]otlinc|[m]etalava|[a]apt2|[s]oong_zip|/d8([[:space:]]|$)|/r8([[:space:]]|$)|/bin/mka' 2>/dev/null | wc -l)
+    build_procs=$(pgrep -f '[s]oong_ui|[s]oong_build|[n]inja|[c]kati|[s]iso|[b]uild/soong/bin/m|[r]om_build\.sh|[g]cp_build_script|repo/main\.py|repo/repo|/usr/local/bin/repo|[u]pload\.py|[s]ignapk|[z]ipalign|[g]it-remote-https|[a]ria2c|[r]clone|[c]lang|[r]ustc|[j]avac|[j]ava|[k]otlinc|[m]etalava|[a]apt2|[s]oong_zip|/d8([[:space:]]|$)|/r8([[:space:]]|$)|/bin/mka' 2>/dev/null | wc -l)
     if [ "$build_procs" -gt 0 ]; then
         echo "BUILD_ACTIVE ($build_procs build processes running)"
         return 0

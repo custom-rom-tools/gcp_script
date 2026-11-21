@@ -98,29 +98,28 @@ def submenu_swap_manager(vm: dict):
         else:
             print(f" {YELLOW}>{NC} VM is powered OFF (TERMINATED). Swap is configured on disk.")
         print()
-        print(f" {BOLD}1){NC} {GREEN}Create Swap on A16 Mount (/mnt/a16){NC}")
-        print(f" {BOLD}2){NC} {GREEN}Create Swap on A17 Mount (/mnt/a17){NC}")
-        print(f" {BOLD}3){NC} {GREEN}Create Swap on Recovery Mount (/mnt/recovery){NC}")
-        print(f" {BOLD}4){NC} {GREEN}Create Swap on Boot Disk (/){NC}")
-        print(f" {BOLD}5){NC} {YELLOW}Turn Off All Swap (swapoff -a){NC}")
-        print(f" {BOLD}6){NC} {RED}Delete Swapfile{NC}")
+        print(f" {BOLD}1){NC} {GREEN}Create Swap on ROM Mount (/mnt/rom){NC}")
+        print(f" {BOLD}2){NC} {GREEN}Create Swap on Recovery Mount (/mnt/recovery){NC}")
+        print(f" {BOLD}3){NC} {GREEN}Create Swap on Boot Disk (/){NC}")
+        print(f" {BOLD}4){NC} {YELLOW}Turn Off All Swap (swapoff -a){NC}")
+        print(f" {BOLD}5){NC} {RED}Delete Swapfile{NC}")
         print()
         print(f" {YELLOW}r){NC} Reload / Refresh Swap Status")
         print(f" {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input(" Select option [0-6, r, q, default: 0]: ").strip().lower()
+        choice = read_input(" Select option [0-5, r, q, default: 0]: ").strip().lower()
         if choice in ("0", "q", "quit", "exit"):
             return
         if choice in ("r", "reload", "refresh"):
             continue
 
-        if choice in ("1", "2", "3"):
+        if choice in ("1", "2"):
             if not is_vm_running(vm):
                 print(">>> VM is powered OFF. Start it first.")
                 pause()
                 continue
-            mount = {"1": "/mnt/a16", "2": "/mnt/a17", "3": "/mnt/recovery"}[choice]
+            mount = {"1": "/mnt/rom", "2": "/mnt/recovery"}[choice]
             size = _prompt_size(16)
             if size < 0:
                 print(">>> Swap creation cancelled.")
@@ -133,7 +132,7 @@ def submenu_swap_manager(vm: dict):
             if create_swap(vm, mount, size):
                 print(f">>> {size}GB swap active at {mount}/swapfile.")
             pause()
-        elif choice == "4":
+        elif choice == "3":
             if not is_vm_running(vm):
                 print(">>> VM is powered OFF. Start it first.")
                 pause()
@@ -150,7 +149,7 @@ def submenu_swap_manager(vm: dict):
             if create_boot_swap(vm, size):
                 print(f">>> {size}GB swap active at /swapfile.")
             pause()
-        elif choice == "5":
+        elif choice == "4":
             if not is_vm_running(vm):
                 print(">>> VM is powered OFF. Start it first.")
                 pause()
@@ -158,7 +157,7 @@ def submenu_swap_manager(vm: dict):
             if disable_all_swap(vm):
                 print(">>> All swap disabled.")
             pause()
-        elif choice == "6":
+        elif choice == "5":
             if not is_vm_running(vm):
                 print(">>> VM is powered OFF. Start it first.")
                 pause()

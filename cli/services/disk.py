@@ -27,12 +27,13 @@ GENERAL_DEV_NAME = "rom-general"
 BOOT_DISK_MARKERS = ("gcp-boot-ccache-disk",)
 
 DISK_ROLES = {
-    "a16": ("gcp-rom-a16-disk", "rom-a16", "/mnt/a16", 500),
-    "a17": ("gcp-rom-a17-disk", "rom-a17", "/mnt/a17", 500),
+    "rom": ("gcp-rom-disk", "rom-disk", "/mnt/rom", 500),
+    "a16": ("gcp-rom-a16-disk", "rom-a16", "/mnt/rom", 500),
+    "a17": ("gcp-rom-a17-disk", "rom-a17", "/mnt/rom", 500),
     "recovery": ("gcp-recovery-disk", "rom-recovery", "/mnt/recovery", 300),
     "rec": ("gcp-recovery-disk", "rom-recovery", "/mnt/recovery", 300),
-    "general": (GENERAL_DISK, GENERAL_DEV_NAME, "", 500),
-    "shared": (GENERAL_DISK, GENERAL_DEV_NAME, "", 500),
+    "general": (GENERAL_DISK, GENERAL_DEV_NAME, "/mnt/rom", 500),
+    "shared": (GENERAL_DISK, GENERAL_DEV_NAME, "/mnt/rom", 500),
 }
 
 
@@ -40,11 +41,13 @@ def load_disk_presets() -> dict:
     """Load disk presets from configs/vm_preset.json."""
     fallback = {
         "general": {"name": GENERAL_DISK, "size_gb": 500, "type": "pd-balanced",
-                    "device_name": GENERAL_DEV_NAME, "default_mount": "", "is_general": True},
+                    "device_name": GENERAL_DEV_NAME, "default_mount": "/mnt/rom", "is_general": True},
+        "rom": {"name": "gcp-rom-disk", "size_gb": 500, "type": "pd-balanced",
+                "device_name": "rom-disk", "default_mount": "/mnt/rom", "is_general": False},
         "a16": {"name": "gcp-rom-a16-disk", "size_gb": 500, "type": "pd-balanced",
-                "device_name": "rom-a16", "default_mount": "/mnt/a16", "is_general": False},
+                "device_name": "rom-a16", "default_mount": "/mnt/rom", "is_general": False},
         "a17": {"name": "gcp-rom-a17-disk", "size_gb": 500, "type": "pd-balanced",
-                "device_name": "rom-a17", "default_mount": "/mnt/a17", "is_general": False},
+                "device_name": "rom-a17", "default_mount": "/mnt/rom", "is_general": False},
         "recovery": {"name": "gcp-recovery-disk", "size_gb": 300, "type": "pd-balanced",
                      "device_name": "rom-recovery", "default_mount": "/mnt/recovery", "is_general": False},
     }
@@ -53,9 +56,10 @@ def load_disk_presets() -> dict:
         disks = data.get("disks", {})
         presets = {}
         for key, role_key, default_dev, default_mp, default_size in (
-            ("general", "general", GENERAL_DEV_NAME, "", 500),
-            ("a16", "rom_a16", "rom-a16", "/mnt/a16", 500),
-            ("a17", "rom_a17", "rom-a17", "/mnt/a17", 500),
+            ("general", "general", GENERAL_DEV_NAME, "/mnt/rom", 500),
+            ("rom", "rom", "rom-disk", "/mnt/rom", 500),
+            ("a16", "rom_a16", "rom-a16", "/mnt/rom", 500),
+            ("a17", "rom_a17", "rom-a17", "/mnt/rom", 500),
             ("recovery", "recovery", "rom-recovery", "/mnt/recovery", 300),
         ):
             cfg = disks.get(role_key, {})
@@ -143,14 +147,12 @@ def get_disk_meta(target_disk: str, vm: dict | None = None) -> dict:
 def get_disk_role_label(target_disk: str, vm: dict | None = None) -> str:
     meta = get_disk_meta(target_disk, vm)
     role = meta.get("role")
-    if role == "a16":
-        return "A16 Specific -> /mnt/a16"
-    if role == "a17":
-        return "A17 Specific -> /mnt/a17"
+    if role in ("rom", "a16", "a17"):
+        return "ROM & Kernel Storage -> /mnt/rom"
     if role == "recovery":
         return "Recovery Specific -> /mnt/recovery"
     if role == "general":
-        return "General Shared -> mounts per build"
+        return "General Shared -> /mnt/rom"
     return "Custom Secondary"
 
 
@@ -243,18 +245,13 @@ def _secondary_disks(vm: dict) -> list[str]:
 # Build disk resolution
 # ---------------------------------------------------------------------------
 def resolve_build_disk(vm: dict, target_category: str) -> dict:
-    """Resolve which disk a ROM/recovery build should use.
-
-    Preference order: matching dedicated disk, shared general disk, then (for
-    recovery only) any attached A16/A17 disk.
-    """
-    cat = (target_category or "16").lower()
-    if cat in ("17", "a17", "aosp-17", "android-17"):
-        specific, mount_point, mode = DISK_PRESETS["a17"]["name"], "/mnt/a17", "specific"
-    elif cat in ("recovery", "rec", "ofrp", "twrp"):
+    """Resolve which disk a ROM/recovery build should use."""
+    cat = (target_category or "").lower()
+    if cat in ("recovery", "rec", "ofrp", "twrp"):
         specific, mount_point, mode = DISK_PRESETS["recovery"]["name"], "/mnt/recovery", "specific"
     else:
-        specific, mount_point, mode = DISK_PRESETS["a16"]["name"], "/mnt/a16", "specific"
+        mount_point = "/mnt/rom"
+        specific, mode = DISK_PRESETS.get("rom", {}).get("name", "gcp-rom-disk"), "rom"
 
     existing = {d.get("name") for d in list_disks(vm)}
     general = vm.get("general_disk") or GENERAL_DISK
@@ -263,14 +260,16 @@ def resolve_build_disk(vm: dict, target_category: str) -> dict:
     if general in existing:
         return {"disk": general, "mount_point": mount_point, "mode": "general"}
 
+    # Fallback to any attached or existing ROM disk
+    for r_name in ("gcp-rom-disk", "gcp-rom-a16-disk", "gcp-rom-a17-disk"):
+        if r_name in existing:
+            return {"disk": r_name, "mount_point": mount_point, "mode": "rom"}
+
     if cat in ("recovery", "rec", "ofrp", "twrp"):
         attached = [d["name"] for d in _secondary_disks(vm)]
-        if DISK_PRESETS["a17"]["name"] in attached:
-            return {"disk": DISK_PRESETS["a17"]["name"], "mount_point": "/mnt/a17",
-                    "mode": "shared-recovery"}
-        if DISK_PRESETS["a16"]["name"] in attached:
-            return {"disk": DISK_PRESETS["a16"]["name"], "mount_point": "/mnt/a16",
-                    "mode": "shared-recovery"}
+        for r_name in ("gcp-rom-disk", "gcp-general-disk", "gcp-rom-a16-disk", "gcp-rom-a17-disk"):
+            if r_name in attached:
+                return {"disk": r_name, "mount_point": "/mnt/recovery", "mode": "shared-recovery"}
 
     return {"disk": general, "mount_point": mount_point, "mode": "general"}
 
@@ -418,7 +417,7 @@ def unmount_disk_on_vm(vm: dict, target_disk: str) -> bool:
     disk_name = normalize_disk_name(target_disk, vm)
     meta = get_disk_meta(disk_name, vm)
     actual_dev = get_attached_device_name(vm, disk_name, meta["device_name"])
-    fallback_mp = meta["default_mount"] or "/mnt/a16"
+    fallback_mp = meta["default_mount"] or "/mnt/rom"
     cmd = f"""DEV=''
 for c in '/dev/disk/by-id/google-{actual_dev}' '/dev/disk/by-id/google-{meta['device_name']}' '/dev/disk/by-id/google-{disk_name}'; do
     if [ -b "$c" ]; then DEV="$c"; break; fi
@@ -528,7 +527,7 @@ fi
         print("    It stays unmounted at boot and mounts on demand when a build starts.")
         return True
 
-    mp = meta["default_mount"] or "/mnt/a16"
+    mp = meta["default_mount"] or "/mnt/rom"
     if not mount_disk_on_vm(vm, disk_name, mp):
         return False
     print(f">>> Disk {disk_name} is formatted and ready at {mp}!")
@@ -635,7 +634,7 @@ def attach_disk_action(vm: dict, target_disk: str = "") -> bool:
         print(f">>> General disk '{disk_name}' attached.")
         print("    Kept unmounted until a build starts.")
     elif is_vm_running(vm):
-        if not mount_disk_on_vm(vm, disk_name, meta["default_mount"] or "/mnt/a16"):
+        if not mount_disk_on_vm(vm, disk_name, meta["default_mount"] or "/mnt/rom"):
             return False
     else:
         print(">>> Note: VM is currently stopped.")
@@ -691,7 +690,7 @@ def mount_disk_action(vm: dict, target_disk: str = "", mount_point: str = "") ->
             if mp and mp != "(unmounted)":
                 status = f"{GREEN}Mounted at {mp}{NC} (Used: {info.get('used', '-')}, Free: {info.get('free', '-')})"
             else:
-                sugg = meta.get("default_mount") or "/mnt/a16"
+                sugg = meta.get("default_mount") or "/mnt/rom"
                 status = f"{YELLOW}Not mounted{NC} (Suggested: {sugg})"
             print(f"   {GREEN}{idx}){NC} {BOLD}{d_name:<20}{NC} [{dev}] - {status}")
 
@@ -714,7 +713,7 @@ def mount_disk_action(vm: dict, target_disk: str = "", mount_point: str = "") ->
             return False
 
     meta = get_disk_meta(target_disk, vm)
-    default_mp = meta.get("default_mount") or "/mnt/a16"
+    default_mp = meta.get("default_mount") or "/mnt/rom"
     if not mount_point:
         mp_input = read_input(f"\nEnter mount point [default: {default_mp}, q=abort]: ").strip()
         if mp_input.lower() in ("q", "quit", "exit"):

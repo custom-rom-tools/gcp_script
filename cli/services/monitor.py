@@ -12,32 +12,22 @@ import shlex
 
 from cli.services.vm import vm_exec, vm_exec_tty, is_vm_running
 
-# Every status/log lives at the root of one of the three build mounts.
+# Every status/log lives at the root of one of the build mounts.
 STATUS_PATHS = (
-    "/mnt/a16/build.status",
-    "/mnt/a17/build.status",
+    "/mnt/rom/build.status",
     "/mnt/recovery/build.status",
 )
 LOG_PATHS = (
-    "/mnt/a16/build.log",
-    "/mnt/a17/build.log",
+    "/mnt/rom/build.log",
     "/mnt/recovery/build.log",
 )
 
 _STATUS_SCRIPT = r"""
-if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then
-  for d in /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-*; do
+if ! mountpoint -q /mnt/rom && ! mountpoint -q /mnt/recovery; then
+  for d in /dev/disk/by-id/google-rom-disk /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-* /dev/sdb; do
     if [ -b "$d" ]; then
-      mkdir -p /mnt/a16
-      sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/a16 2>/dev/null || true
-      if [ -f /mnt/a16/.last_mount ]; then
-        LMP=$(cat /mnt/a16/.last_mount 2>/dev/null | tr -d '\r\n ')
-        if [ -n "$LMP" ] && [ "$LMP" != "/mnt/a16" ]; then
-          sudo umount /mnt/a16 2>/dev/null || true
-          mkdir -p "$LMP"
-          sudo mount -o discard,defaults,noatime,nofail "$d" "$LMP" 2>/dev/null || true
-        fi
-      fi
+      mkdir -p /mnt/rom
+      sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/rom 2>/dev/null || true
       break
     fi
   done
@@ -45,7 +35,7 @@ fi
 
 ST=""
 STATUS_FILE=""
-for f in $(ls -t /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status 2>/dev/null); do
+for f in $(ls -t /mnt/rom/build.status /mnt/recovery/build.status 2>/dev/null); do
   [ -f "$f" ] && STATUS_FILE="$f" && break
 done
 BUILD_DIR=""
@@ -61,7 +51,7 @@ if [ -n "$STATUS_FILE" ]; then
     LOG="$BUILD_DIR/build.log.prev"
   fi
 else
-  LOG=$(ls -t /mnt/a16/build.log /mnt/a16/build.log.failed /mnt/a17/build.log /mnt/a17/build.log.failed /mnt/recovery/build.log 2>/dev/null | head -n 1)
+  LOG=$(ls -t /mnt/rom/build.log /mnt/rom/build.log.failed /mnt/recovery/build.log /mnt/recovery/build.log.failed 2>/dev/null | head -n 1)
   [ -n "$LOG" ] && BUILD_DIR=$(dirname "$LOG")
   ST="NO_BUILD_RECORDED"
 fi
@@ -207,17 +197,17 @@ def collect_build_status(vm: dict) -> dict:
 def get_active_log_path(vm: dict) -> str:
     """Return the log belonging to the newest build status file or latest log file."""
     script = (
-        'if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then '
-        'for d in /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-*; do '
-        'if [ -b "$d" ]; then mkdir -p /mnt/a16; sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/a16 2>/dev/null || true; break; fi; done; '
-        'fi; '
-        'for f in $(ls -t /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status 2>/dev/null); do '
+        'if ! mountpoint -q /mnt/rom && ! mountpoint -q /mnt/recovery; then '
+        'for d in /dev/disk/by-id/google-rom-disk /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-* /dev/sdb; do '
+        'if [ -b "$d" ]; then mkdir -p /mnt/rom; sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/rom 2>/dev/null || true; '
+        'break; fi; done; fi; '
+        'for f in $(ls -t /mnt/rom/build.status /mnt/recovery/build.status 2>/dev/null); do '
         'd=$(dirname "$f"); '
         'if [ -s "$d/build.log" ]; then echo "$d/build.log"; exit 0; '
         'elif [ -s "$d/build.log.failed" ]; then echo "$d/build.log.failed"; exit 0; '
         'elif [ -s "$d/build.log.prev" ]; then echo "$d/build.log.prev"; exit 0; '
         'fi; done; '
-        'ls -t /mnt/a16/build.log /mnt/a16/build.log.failed /mnt/a17/build.log /mnt/recovery/build.log 2>/dev/null | head -n 1'
+        'ls -t /mnt/rom/build.log /mnt/rom/build.log.failed /mnt/recovery/build.log 2>/dev/null | head -n 1'
     )
     res = vm_exec(vm, script, check=False, timeout=20)
     lines = (res.stdout or "").replace("\r", "").strip().splitlines()
@@ -227,12 +217,11 @@ def get_active_log_path(vm: dict) -> str:
 def list_available_build_logs(vm: dict) -> list[str]:
     """Return a list of all existing build logs across VM mounts."""
     script = (
-        'if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then '
-        'for d in /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-*; do '
-        'if [ -b "$d" ]; then mkdir -p /mnt/a16; sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/a16 2>/dev/null || true; break; fi; done; '
-        'fi; '
-        'ls -t /mnt/a16/build.log /mnt/a16/build.log.failed /mnt/a16/build.log.prev /mnt/a16/logs/build*.log '
-        '/mnt/a17/build.log /mnt/a17/build.log.failed /mnt/a17/build.log.prev /mnt/a17/logs/build*.log '
+        'if ! mountpoint -q /mnt/rom && ! mountpoint -q /mnt/recovery; then '
+        'for d in /dev/disk/by-id/google-rom-disk /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-* /dev/sdb; do '
+        'if [ -b "$d" ]; then mkdir -p /mnt/rom; sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/rom 2>/dev/null || true; '
+        'break; fi; done; fi; '
+        'ls -t /mnt/rom/build.log /mnt/rom/build.log.failed /mnt/rom/build.log.prev /mnt/rom/logs/build*.log '
         '/mnt/recovery/build.log /mnt/recovery/build.log.failed /mnt/recovery/build.log.prev /mnt/recovery/logs/build*.log 2>/dev/null || true'
     )
     res = vm_exec(vm, script, check=False, timeout=20)
@@ -391,7 +380,7 @@ def stop_active_build(vm: dict) -> bool:
         "pkill -SIGINT -f '([n]inja|[s]oong|[r]epo|[p]ython3.*upload)' 2>/dev/null || true; "
         "sleep 1; "
         "pkill -9 -f '([n]inja|[s]oong|[r]epo)' 2>/dev/null || true; "
-        "for f in /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status; do "
+        "for f in /mnt/rom/build.status /mnt/recovery/build.status; do "
         "[ -f \"$f\" ] && echo \"BUILD_STATUS: CANCELLED by user - $(date)\" > \"$f\"; done; "
         "rm -f /run/gcp-build-active 2>/dev/null || true; true"
     )

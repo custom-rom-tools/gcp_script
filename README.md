@@ -19,19 +19,16 @@ build pipelines, VM lifecycle and storage helpers all live together under
   * Ubuntu 22.04 LTS, toolchains, `repo`, Ninja, Python and a persistent ccache
     (5 GB cap) on the boot disk.
 * **Build data disks (`pd-balanced SSD`)**:
-  * `gcp-rom-a16-disk` (500 GB) -> `/mnt/a16`
-  * `gcp-rom-a17-disk` (500 GB) -> `/mnt/a17`
-  * `gcp-recovery-disk` (300 GB) -> `/mnt/recovery`
+  * `gcp-rom-disk` (500 GB) -> `/mnt/rom` (all ROM & Kernel builds)
+  * `gcp-recovery-disk` (300 GB) -> `/mnt/recovery` (OrangeFox, TWRP)
   * `gcp-general-disk` (500 GB) -> shared fallback for any build. Its guest
     device name is `rom-general`; it is deliberately left unmounted at boot and
     mounted on demand at the target mountpoint.
-  * Specific disks are preferred; the general disk is used when the specific
-    disk is missing. Recovery also falls back to an attached A16/A17 disk.
-  * Workspaces stay isolated: `/mnt/a16/evox`, `/mnt/a16/los`,
-    `/mnt/a16/lunaris`, `/mnt/recovery/ofrp`, `/mnt/recovery/twrp`.
+  * Workspaces stay isolated: `/mnt/rom/evox`, `/mnt/rom/los`,
+    `/mnt/rom/lunaris`, `/mnt/recovery/ofrp`, `/mnt/recovery/twrp`.
 * **Memory & swap**:
   * Pure 64 GB RAM mode by default.
-  * On-demand swapfiles can be created on `/mnt/a16`, `/mnt/a17`,
+  * On-demand swapfiles can be created on `/mnt/rom`,
     `/mnt/recovery` or the boot disk.
 
 ### Remote execution & caching
@@ -183,9 +180,9 @@ escapes and carriage returns removed.
 ./gcp_menu.sh create-disk general 500
 ./gcp_menu.sh delete-disk general
 ./gcp_menu.sh attach-disk | detach-disk [name]
-./gcp_menu.sh format-disk general     # accepts a16/a17/recovery/general or full name
+./gcp_menu.sh format-disk general     # accepts rom/recovery/general or full name
 ./gcp_menu.sh swap                    # Interactive swap manager
-./gcp_menu.sh swap-create 16 /mnt/a16/swapfile
+./gcp_menu.sh swap-create 16 /mnt/rom/swapfile
 ./gcp_menu.sh swap-off
 
 ./gcp_menu.sh logs                    # Build status dashboard

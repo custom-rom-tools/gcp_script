@@ -75,8 +75,7 @@ def get_sf_key() -> Path | None:
     candidate_keys = [
         Path.home() / ".ssh" / "crave_sf",
         Path.home() / ".ssh" / "sf_key",
-        Path("/mnt/a16/crave_sf"),
-        Path("/mnt/a17/crave_sf"),
+        Path("/mnt/rom/crave_sf"),
         Path("/tmp/sf_key"),
     ]
     for key_path in candidate_keys:
@@ -183,11 +182,12 @@ def resolve_target_path(item: str) -> Path:
 
     # Check common VM build mount paths
     for mnt_base in [
-        Path("/mnt/a17/evox"),
-        Path("/mnt/a16/evox"),
+        Path("/mnt/rom/evox"),
+        Path("/mnt/rom/los"),
+        Path("/mnt/rom/lunaris"),
+        Path("/mnt/rom"),
         Path("/mnt/recovery/ofrp"),
         Path("/mnt/recovery/twrp"),
-        Path("/mnt/rom"),
     ]:
         cand = mnt_base / "out" / "target" / "product" / item
         if cand.is_dir():
@@ -799,8 +799,7 @@ def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> Non
 
     # Also persist to active storage mount points and /tmp
     for extra_dest in [
-        Path("/mnt/a16/.upload_links.log"),
-        Path("/mnt/a17/.upload_links.log"),
+        Path("/mnt/rom/.upload_links.log"),
         Path("/mnt/recovery/.upload_links.log"),
         Path("/tmp/.upload_links.log"),
     ]:

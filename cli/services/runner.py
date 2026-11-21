@@ -232,7 +232,7 @@ fi
 if [ -n "$active" ]; then
     echo BUILD_ALREADY_RUNNING
     echo "$active"
-    for f in /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status; do
+    for f in /mnt/rom/build.status /mnt/recovery/build.status; do
         [ -f "$f" ] && echo "$f: $(cat "$f")"
     done
 else
@@ -535,7 +535,7 @@ exec bash
 """
 
 
-def _target_work_folder(target_type: str, name: str, version: str) -> str:
+def _target_work_folder(target_type: str, name: str, version: str = "") -> str:
     """Return the expected workspace directory basename (e.g. 'evox', 'los', 'ofrp')."""
     target_type = (target_type or "rom").lower()
     name = (name or "").lower()
@@ -547,8 +547,16 @@ def _target_work_folder(target_type: str, name: str, version: str) -> str:
                 rec_cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
                 if name in rec_cfg and "work_dir" in rec_cfg[name]:
                     return Path(rec_cfg[name]["work_dir"]).name
+                for rname, rinfo in rec_cfg.items():
+                    if name in rinfo.get("aliases", []):
+                        if "work_dir" in rinfo:
+                            return Path(rinfo["work_dir"]).name
         except Exception:
             pass
+        if "fox" in name or "orange" in name or name == "ofrp":
+            return "ofrp"
+        if "twrp" in name or "teamwin" in name:
+            return "twrp"
         return name
     elif target_type == "kernel":
         try:
@@ -559,9 +567,14 @@ def _target_work_folder(target_type: str, name: str, version: str) -> str:
                     ver_cfg = kern_cfg[name].get("versions", {}).get(ver, {})
                     if "work_dir" in ver_cfg:
                         return Path(ver_cfg["work_dir"]).name
+                for kname, kinfo in kern_cfg.items():
+                    if name in kinfo.get("aliases", []):
+                        ver_cfg = kinfo.get("versions", {}).get(ver, {})
+                        if "work_dir" in ver_cfg:
+                            return Path(ver_cfg["work_dir"]).name
         except Exception:
             pass
-        return "evox" if "evo" in name else name
+        return "evox"
     else:  # rom
         try:
             cfg_path = REPO_ROOT / "configs" / "rom.json"
@@ -583,6 +596,72 @@ def _target_work_folder(target_type: str, name: str, version: str) -> str:
         if "lineage" in name or name == "los":
             return "los"
         return name
+
+
+def _is_same_build_source(
+    prev_id: str,
+    prev_clean: str,
+    target_type: str,
+    target_name: str,
+    version: str,
+    target_work_folder: str,
+    dir_list: list[str],
+    mount_point: str = "",
+    disk_mode: str = "general",
+) -> bool:
+    """Return True if the current build uses the same source/workspace as on disk."""
+    t_type = (target_type or "").lower()
+    t_name = (target_name or "").lower()
+    t_ver = str(version or "").lower()
+    p_clean = (prev_clean or "").lower()
+    p_id = (prev_id or "").lower()
+
+    # 1. If target workspace directory already exists on disk, the source is already there!
+    if target_work_folder and target_work_folder in dir_list:
+        return True
+
+    # 2. Exact target ID match
+    tid = f"{t_type}:{t_name}:{t_ver}"
+    if p_id and (p_id == tid or tid in p_clean):
+        return True
+
+    # Parse previous target components if in standard "type:name:version" format
+    p_type, p_name, p_ver = "", "", ""
+    if ":" in p_id:
+        parts = p_id.split(":")
+        if len(parts) >= 3:
+            p_type, p_name, p_ver = parts[0], parts[1], parts[2]
+        elif len(parts) == 2:
+            p_type, p_name = parts[0], parts[1]
+
+    # 3. Check if previous target and current target share the same workspace folder
+    if p_type and p_name:
+        prev_work_folder = _target_work_folder(p_type, p_name, p_ver)
+        if prev_work_folder and target_work_folder and prev_work_folder == target_work_folder:
+            return True
+
+    # 4. Kernel <-> Evolution X ROM cross-compatibility (both share evox workspace)
+    is_current_evo_kernel = (t_type == "kernel") or (t_type == "rom" and "evo" in t_name)
+    is_prev_evo_kernel = any(k in p_clean for k in ("kernel", "atoll", "evolution", "evox", "evo"))
+    if is_current_evo_kernel and is_prev_evo_kernel:
+        return True
+
+    # 5. Recovery builds on /mnt/recovery (OrangeFox and TWRP coexist in separate subfolders)
+    if t_type == "recovery" or mount_point == "/mnt/recovery":
+        if p_type == "recovery" or any(r in p_clean for r in ("recovery", "ofrp", "fox", "twrp")):
+            return True
+
+    # 6. Same target name and version
+    if t_name and t_name in p_clean:
+        if not t_ver or t_ver in p_clean or t_type == "recovery":
+            return True
+
+    # 7. Dedicated disk
+    if disk_mode not in ("general", "shared-recovery"):
+        if not p_id or any(k in p_clean for k in (t_type, t_name, f"aosp-{t_ver}", f"rom a{t_ver}")):
+            return True
+
+    return False
 
 
 def _general_disk_data_prompt(
@@ -638,30 +717,21 @@ def _general_disk_data_prompt(
     prev = str(data.get("prev", ""))
     used = str(data.get("used", ""))
 
-    tid = (target_id or f"{target_type.lower()}:{target_name.lower()}:{version}").lower()
     prev_clean = prev.strip()
     prev_id = prev_clean.split("|")[0].strip().lower() if "|" in prev_clean else prev_clean.lower()
     target_work_folder = _target_work_folder(target_type, target_name, version)
 
-    is_same_target = False
-    if prev_id and prev_id == tid:
-        is_same_target = True
-    elif tid in prev_clean.lower():
-        is_same_target = True
-    elif target_name.lower() in prev_clean.lower() and str(version) in prev_clean:
-        is_same_target = True
-    elif target_work_folder and target_work_folder in dir_list:
-        # Expected workspace folder is present on disk
-        if not prev_id or prev_id in (target_label.lower(), branch.lower(), f"aosp-{version}".lower(), f"rom a{version}".lower(), "recovery"):
-            is_same_target = True
-        elif target_name.lower() in prev_id:
-            is_same_target = True
-    elif disk_mode != "general":
-        # Specific/dedicated disk
-        if not prev_id or prev_id in (target_label.lower(), branch.lower(), f"aosp-{version}".lower(), f"rom a{version}".lower(), "recovery"):
-            is_same_target = True
-
-    if is_same_target:
+    if _is_same_build_source(
+        prev_id=prev_id,
+        prev_clean=prev_clean,
+        target_type=target_type,
+        target_name=target_name,
+        version=version,
+        target_work_folder=target_work_folder,
+        dir_list=dir_list,
+        mount_point=mount_point,
+        disk_mode=disk_mode,
+    ):
         return
 
     display = target_label or branch
@@ -742,7 +812,7 @@ def dispatch_build(
     print(f"{CYAN}Target Storage Disk{NC}  {target_disk} {YELLOW}{mode_label}{NC}")
     print(f"{CYAN}Mount Point Path{NC}     {mount_point}")
     if target_type == "recovery" and mount_point != "/mnt/recovery":
-        print(f"{CYAN}Recovery Workspace{NC}   {mount_point}/recovery (symlinked to /mnt/recovery)")
+        print(f"{CYAN}Recovery Workspace{NC}   {mount_point}/recovery")
     print(f"{CYAN}SourceForge Upload{NC}   {sf_upload}")
     print(f"{CYAN}Gofile.io Upload{NC}     {gofile_upload}")
     shutdown_text = ("Power off immediately on success (30m idle fallback on error)"

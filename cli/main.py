@@ -441,7 +441,7 @@ def main():
     elif command == "swap-create":
         from cli.services.swap import create_swap
         size = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 16
-        path = sys.argv[3] if len(sys.argv) > 3 else "/mnt/a16/swapfile"
+        path = sys.argv[3] if len(sys.argv) > 3 else "/mnt/rom/swapfile"
         mount = path.rsplit("/", 1)[0] or "/"
         create_swap(vm, mount, size)
 
