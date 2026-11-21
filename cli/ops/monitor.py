@@ -12,11 +12,12 @@ from cli.base import (
 from cli.services.monitor import (
     collect_build_status, follow_live_logs, view_log_snapshot,
     scan_log_for_errors, stop_active_build, get_running_build_processes,
+    list_available_build_logs, get_metadata_build_status,
 )
 from cli.services.runner import attach_tmux_session, net_speed_setup_cmd
 from cli.services.link import sync_links_from_vm
 from cli.services.vm import (
-    is_vm_running, vm_exec, vm_exec_tty, get_vm_info, get_vm_ip,
+    is_vm_running, vm_exec, vm_exec_tty, get_vm_info, get_vm_ip, start_vm,
 )
 from cli.services.download import download_artifacts
 
@@ -109,11 +110,103 @@ def _print_build_dashboard(vm: dict) -> dict:
     return data
 
 
-def submenu_build_status(vm: dict):
-    """Interactive build status page with log actions."""
-    if not require_vm_running(vm, "view build logs and status"):
+def _submenu_alternate_logs(vm: dict):
+    clear_screen()
+    print_header("CHOOSE ALTERNATE BUILD LOG")
+    logs = list_available_build_logs(vm)
+    if not logs:
+        print(">>> No build logs found on VM.")
         pause()
         return
+
+    print(" Select a log to view or inspect:\n")
+    for idx, p in enumerate(logs, 1):
+        name = p.split("/")[-1]
+        tag = ""
+        if name == "build.log":
+            tag = f" {GREEN}[Current / Active]{NC}"
+        elif name == "build.log.failed":
+            tag = f" {RED}[Last Failed Build Log]{NC}"
+        elif name == "build.log.prev":
+            tag = f" {YELLOW}[Previous Run Before Restart]{NC}"
+        elif "failed" in name:
+            tag = f" {RED}[Archived Failure]{NC}"
+        print(f"  {idx}) {p}{tag}")
+    print()
+    print(f"  {RED}0 / q){NC} Back")
+    print_divider()
+    choice = read_input(f"Select log [1-{len(logs)}, 0/q]: ").strip().lower()
+    if not choice or choice in ("0", "q", "quit", "exit"):
+        return
+    if choice.isdigit() and 1 <= int(choice) <= len(logs):
+        chosen = logs[int(choice) - 1]
+        print(f"\n Actions for: {chosen}")
+        print("  1) View in Pager (less)")
+        print("  2) Scan for Errors (grep FAILED)")
+        print("  3) Download to Mac (~/Downloads)")
+        sub_choice = read_input(" Select action [1-3, default: 1]: ").strip()
+        if sub_choice == "2":
+            clear_screen()
+            print_header("SCANNING BUILD LOG FOR COMPILATION ERRORS")
+            print(f" Log Target: {BOLD}{chosen}{NC}\n")
+            scan_log_for_errors(vm, chosen)
+            pause()
+        elif sub_choice == "3":
+            download_artifacts(vm, "log", chosen)
+            pause()
+        else:
+            view_log_snapshot(vm, chosen)
+
+
+def submenu_build_status(vm: dict):
+    """Interactive build status page with log actions."""
+    if not is_vm_running(vm):
+        from pathlib import Path
+        import subprocess
+        clear_screen()
+        print_header("BUILD STATUS & ERROR LOGS (OFFLINE)")
+        print(f" {YELLOW}>>> VM '{vm['instance']}' is currently powered OFF (Compute billing paused).{NC}\n")
+        meta = get_metadata_build_status(vm)
+        status = meta.get("last-build-status") or "NO_BUILD_RECORDED"
+        stamp = meta.get("last-build-timestamp") or ""
+        error = meta.get("last-build-error") or ""
+
+        status_color = RED if "FAIL" in status.upper() else (GREEN if "SUCCESS" in status.upper() else YELLOW)
+        print(f" {BOLD}LAST RECORDED STATUS :{NC} {status_color}{status}{NC}")
+        if stamp:
+            print(f" {BOLD}TIMESTAMP            :{NC} {CYAN}{stamp}{NC}")
+        if error:
+            print(f"\n {RED}{BOLD}>>> LAST DETECTED COMPILATION ERROR (saved in GCP metadata):{NC}")
+            print_thin_divider()
+            for line in error.splitlines():
+                print(f"   {line}")
+            print_thin_divider()
+
+        local_logs = sorted(Path.home().glob("Downloads/build_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if local_logs:
+            print(f"\n {BOLD}LOCAL LOGS FOUND IN ~/Downloads:{NC}")
+            for l in local_logs[:3]:
+                print(f"   * {l.name} ({l.stat().st_size // 1024} KB)")
+
+        print()
+        print(f" {GREEN}1){NC} Power on VM to view full interactive dashboard & live logs")
+        if local_logs:
+            print(f" {CYAN}2){NC} View most recent local build log in terminal ({local_logs[0].name})")
+        print(f" {RED}0 / q){NC} Back to Main Menu")
+        print_divider()
+        choice = read_input(" Select option [default: 1]: ").strip().lower()
+        if choice in ("0", "q", "quit", "exit"):
+            return
+        if choice == "2" and local_logs:
+            clear_screen()
+            print_header(f"LOCAL LOG: {local_logs[0].name}")
+            subprocess.run(["less", "-R", str(local_logs[0])])
+            return
+        if choice in ("1", "", "y", "yes"):
+            print(f">>> Starting VM '{vm['instance']}'...")
+            if not start_vm(vm) or not is_vm_running(vm):
+                pause()
+                return
 
     while True:
         data = _print_build_dashboard(vm)
@@ -125,13 +218,14 @@ def submenu_build_status(vm: dict):
             print(f" {CYAN}1){NC} View Full Build Log (less)")
         print(f" {CYAN}2){NC} Download Build Log (.log) to Downloads")
         print(f" {YELLOW}3){NC} Scan Log for Errors (grep FAILED with context)")
-        print(f" {RED}4){NC} Stop Active Build")
+        print(f" {CYAN}4){NC} Choose / View Alternate Build Log (failed, prev, archives)")
+        print(f" {RED}5){NC} Stop Active Build")
         print()
         print(f" {YELLOW}r){NC} Reload / Refresh Build Status")
         print(f" {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input(" Select option [0-4, r, q, default: r]: ").strip().lower()
+        choice = read_input(" Select option [0-5, r, q, default: r]: ").strip().lower()
         if choice in ("0", "q", "quit", "exit"):
             return
         if choice in ("r", "reload", "refresh", ""):
@@ -151,6 +245,8 @@ def submenu_build_status(vm: dict):
             scan_log_for_errors(vm, data.get("log_path", ""))
             pause()
         elif choice == "4":
+            _submenu_alternate_logs(vm)
+        elif choice == "5":
             submenu_stop_build(vm)
 
 

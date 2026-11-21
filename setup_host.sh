@@ -166,7 +166,22 @@ if [ -b "/dev/disk/by-id/google-rom-general" ]; then
         echo "Formatting /dev/disk/by-id/google-rom-general with ext4..."
         sudo mkfs.ext4 -m 1 -F /dev/disk/by-id/google-rom-general
     fi
-    echo "General disk left unmounted (it will mount to /mnt/a16, /mnt/a17, or /mnt/recovery when a build starts)."
+    TARGET_MP="/mnt/a16"
+    sudo mkdir -p "$TARGET_MP"
+    if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then
+        sudo mount -o discard,defaults,noatime,nofail /dev/disk/by-id/google-rom-general "$TARGET_MP" 2>/dev/null || true
+        if [ -f "$TARGET_MP/.last_mount" ]; then
+            SAVED_MP=$(cat "$TARGET_MP/.last_mount" 2>/dev/null | tr -d '\r\n ')
+            if [ -n "$SAVED_MP" ] && [ "$SAVED_MP" != "$TARGET_MP" ]; then
+                sudo umount "$TARGET_MP" 2>/dev/null || true
+                sudo mkdir -p "$SAVED_MP"
+                sudo mount -o discard,defaults,noatime,nofail /dev/disk/by-id/google-rom-general "$SAVED_MP" 2>/dev/null || true
+                TARGET_MP="$SAVED_MP"
+            fi
+        fi
+        sudo chown "$USER:$USER" "$TARGET_MP" 2>/dev/null || true
+        echo "General disk mounted at $TARGET_MP."
+    fi
 fi
 
 if [ "$FOUND_SECONDARY" -eq 0 ]; then
