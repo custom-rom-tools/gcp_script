@@ -26,6 +26,28 @@ for id in "${!DISK_MAP[@]}"; do
     fi
 done
 
+# Also mount general disk or any attached secondary build disk if not yet mounted
+if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then
+    for gen_dev in /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-*; do
+        if [ -b "$gen_dev" ]; then
+            tmp_mp="/mnt/a16"
+            mkdir -p "$tmp_mp"
+            mount -o discard,defaults,noatime,nofail "$gen_dev" "$tmp_mp" 2>/dev/null || true
+            if mountpoint -q "$tmp_mp"; then
+                if [ -f "$tmp_mp/.last_mount" ]; then
+                    target_mp=$(cat "$tmp_mp/.last_mount" 2>/dev/null | tr -d '\r\n ')
+                    if [ -n "$target_mp" ] && [ "$target_mp" != "$tmp_mp" ]; then
+                        umount "$tmp_mp" 2>/dev/null || true
+                        mkdir -p "$target_mp"
+                        mount -o discard,defaults,noatime,nofail "$gen_dev" "$target_mp" 2>/dev/null || true
+                    fi
+                fi
+                break
+            fi
+        fi
+    done
+fi
+
 # 2. Configure SSH keepalive to terminate dead sessions
 mkdir -p /etc/ssh/sshd_config.d
 cat << 'EOF_SSH' > /etc/ssh/sshd_config.d/99-watchdog-keepalive.conf

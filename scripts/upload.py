@@ -886,6 +886,66 @@ def _update_gcp_metadata_links(lines: list[str]) -> bool:
     except Exception as e:
         return False
 
+
+def _update_gcp_metadata_build_status(status: str, error: str = "") -> bool:
+    """Save build status & root error to GCP instance metadata so they survive shutdowns."""
+    if not status:
+        return False
+    try:
+        import json
+        import urllib.request
+        hdr = {"Metadata-Flavor": "Google"}
+        token_req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+            headers=hdr,
+        )
+        token = json.loads(urllib.request.urlopen(token_req, timeout=4).read().decode())["access_token"]
+
+        proj_req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/project/project-id",
+            headers=hdr,
+        )
+        project = urllib.request.urlopen(proj_req, timeout=4).read().decode().strip()
+
+        inst_req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/name",
+            headers=hdr,
+        )
+        instance = urllib.request.urlopen(inst_req, timeout=4).read().decode().strip()
+
+        zone_req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/zone",
+            headers=hdr,
+        )
+        zone = urllib.request.urlopen(zone_req, timeout=4).read().decode().strip().split("/")[-1]
+
+        inst_url = f"https://compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{instance}"
+        req_inst = urllib.request.Request(inst_url, headers={"Authorization": f"Bearer {token}"})
+        inst_data = json.loads(urllib.request.urlopen(req_inst, timeout=6).read().decode())
+        meta = inst_data.get("metadata", {})
+        fp = meta.get("fingerprint", "")
+        items = meta.get("items", []) or []
+
+        new_items = [it for it in items if it.get("key") not in ("last-build-status", "last-build-error", "last-build-timestamp")]
+        new_items.append({"key": "last-build-status", "value": status.strip()})
+        if error:
+            new_items.append({"key": "last-build-error", "value": error.strip()})
+        import time
+        new_items.append({"key": "last-build-timestamp", "value": time.strftime("%Y-%m-%d %H:%M:%S %Z")})
+
+        set_url = f"{inst_url}/setMetadata"
+        body = json.dumps({"fingerprint": fp, "items": new_items}).encode("utf-8")
+        req_set = urllib.request.Request(
+            set_url,
+            data=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req_set, timeout=10)
+        return True
+    except Exception:
+        return False
+
 def main():
     args = sys.argv[1:]
     do_sf = None

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from cli.base import is_interactive, read_input
 from cli.services.vm import is_vm_running, vm_exec, vm_pull
-from cli.services.monitor import get_active_log_path
+from cli.services.monitor import get_active_log_path, list_available_build_logs
 
 MOUNTS = ("/mnt/a16", "/mnt/a17", "/mnt/recovery")
 DOWNLOAD_DIR = Path.home() / "Downloads"
@@ -188,16 +188,15 @@ def _human_size(size: int) -> str:
     return f"{size} B"
 
 
-def _download_log(vm: dict, log_path: str = "") -> bool:
-    remote = log_path or get_active_log_path(vm)
+def _download_single_log(vm: dict, remote: str) -> bool:
+    """Download a single log file from the VM to ~/Downloads."""
     if not remote:
-        print(">>> No active build.log found on VM (/mnt/a16, /mnt/a17, or /mnt/recovery).")
         return False
-
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    label = Path(remote).parent.name or "build"
+    mount_label = Path(remote).parent.name or "build"
+    base_name = Path(remote).name
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    local = DOWNLOAD_DIR / f"build_{label}_{stamp}.log"
+    local = DOWNLOAD_DIR / f"{base_name.replace('.log', '')}_{mount_label}_{stamp}.log"
 
     size_res = vm_exec(vm, f"stat -c %s {shlex.quote(remote)} 2>/dev/null || echo 0",
                        check=False, timeout=20)
@@ -206,11 +205,11 @@ def _download_log(vm: dict, log_path: str = "") -> bool:
     except (ValueError, IndexError):
         remote_size = 0
 
-    print(f">>> Downloading {remote} -> {local} ...", end="", flush=True)
+    print(f">>> Downloading {remote} -> {local.name} ... ", end="", flush=True)
     res = vm_pull(vm, [remote], str(DOWNLOAD_DIR))
     produced = DOWNLOAD_DIR / Path(remote).name
     if res.returncode != 0 or not produced.exists():
-        print(" FAILED")
+        print("FAILED")
         message = (res.stderr or res.stdout or "").strip()
         if message:
             print(f"    {message.splitlines()[-1]}")
@@ -220,16 +219,13 @@ def _download_log(vm: dict, log_path: str = "") -> bool:
             produced.replace(local)
         except OSError:
             pass
-    print(" Done.")
+    print("Done.")
 
     local_size = local.stat().st_size
-    print()
     print("=" * 60)
-    print(" Full build log downloaded successfully!")
+    print(" Build log downloaded successfully!")
     print(f"    Source   : {remote} ({remote_size} bytes)")
-    print(f"    Saved to : {local} ({_human_size(local_size)}, {local_size} bytes)")
-    if remote_size and remote_size != local_size:
-        print("    WARNING: byte count differs - the log may still be growing.")
+    print(f"    Saved to : {local} ({_human_size(local_size)})")
 
     clean = local.with_name(local.stem + "_clean.log")
     try:
@@ -242,6 +238,102 @@ def _download_log(vm: dict, log_path: str = "") -> bool:
         pass
     print("=" * 60)
     return True
+
+
+def _download_log(vm: dict, log_path: str = "") -> bool:
+    if log_path:
+        return _download_single_log(vm, log_path)
+
+    available = list_available_build_logs(vm)
+    if not available:
+        remote = get_active_log_path(vm)
+        if remote:
+            available = [remote]
+
+    if not available:
+        print(">>> No build logs found on VM (/mnt/a16, /mnt/a17, or /mnt/recovery).")
+        local_logs = sorted(DOWNLOAD_DIR.glob("build_*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if local_logs:
+            print(f"\n>>> Found {len(local_logs)} previously downloaded log(s) in ~/Downloads:")
+            for l in local_logs[:5]:
+                print(f"    * {l.name} ({_human_size(l.stat().st_size)})")
+        return False
+
+    if len(available) == 1:
+        return _download_single_log(vm, available[0])
+
+    print("=" * 60)
+    print(" AVAILABLE BUILD LOGS ON VM")
+    print("=" * 60)
+    for idx, p in enumerate(available, 1):
+        name = Path(p).name
+        tag = ""
+        if name == "build.log":
+            tag = " [Current / Active Log]"
+        elif name == "build.log.failed":
+            tag = " [Last Failed Build Log]"
+        elif name == "build.log.prev":
+            tag = " [Previous Build Log]"
+        elif "failed" in name:
+            tag = " [Archived Failure Log]"
+        print(f"  {idx}) {p}{tag}")
+    print()
+    print("  a) Download ALL build logs above")
+    print("  0 / q) Cancel")
+    print("=" * 60)
+
+    choice = read_input(f"Select log to download [1-{len(available)}, a, 0/q, default: 1]: ").strip().lower()
+    if not choice:
+        choice = "1"
+    if choice in ("0", "q", "quit", "exit"):
+        return False
+    if choice == "a":
+        success = True
+        for p in available:
+            if not _download_single_log(vm, p):
+                success = False
+        return success
+    if choice.isdigit() and 1 <= int(choice) <= len(available):
+        return _download_single_log(vm, available[int(choice) - 1])
+    return False
+
+
+def auto_download_failed_log(vm: dict, mount_point: str = "/mnt/a16") -> str:
+    """Check if the build failed and auto-pull the failure log to ~/Downloads."""
+    try:
+        st_file = f"{mount_point}/build.status"
+        res = vm_exec(vm, f"cat {shlex.quote(st_file)} 2>/dev/null || true", check=False, timeout=10)
+        status_text = (res.stdout or "").strip()
+        if "FAILED" not in status_text.upper():
+            return ""
+
+        failed_remote = f"{mount_point}/build.log.failed"
+        check_res = vm_exec(vm, f"[ -s {shlex.quote(failed_remote)} ] && echo 1 || echo 0", check=False, timeout=10)
+        if "1" not in (check_res.stdout or ""):
+            failed_remote = f"{mount_point}/build.log"
+
+        DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        label = Path(mount_point).name
+        local = DOWNLOAD_DIR / f"build_failed_{label}_{stamp}.log"
+
+        print(f"\n>>> [AUTO-DOWNLOAD] Build failed: Downloading failure log to {local.name} ... ", end="", flush=True)
+        p_res = vm_pull(vm, [failed_remote], str(DOWNLOAD_DIR))
+        produced = DOWNLOAD_DIR / Path(failed_remote).name
+        if p_res.returncode == 0 and produced.exists():
+            if produced != local:
+                try:
+                    produced.replace(local)
+                except OSError:
+                    pass
+            print(f"Done ({_human_size(local.stat().st_size)})")
+            print(f">>> [SAVED] Failure log saved to: {local}")
+            return str(local)
+        else:
+            print("Failed")
+            return ""
+    except Exception:
+        return ""
 
 
 def download_artifacts(vm: dict, artifact_type: str = "rom", log_path: str = "",

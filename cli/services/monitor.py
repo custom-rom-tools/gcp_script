@@ -25,6 +25,24 @@ LOG_PATHS = (
 )
 
 _STATUS_SCRIPT = r"""
+if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then
+  for d in /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-*; do
+    if [ -b "$d" ]; then
+      mkdir -p /mnt/a16
+      sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/a16 2>/dev/null || true
+      if [ -f /mnt/a16/.last_mount ]; then
+        LMP=$(cat /mnt/a16/.last_mount 2>/dev/null | tr -d '\r\n ')
+        if [ -n "$LMP" ] && [ "$LMP" != "/mnt/a16" ]; then
+          sudo umount /mnt/a16 2>/dev/null || true
+          mkdir -p "$LMP"
+          sudo mount -o discard,defaults,noatime,nofail "$d" "$LMP" 2>/dev/null || true
+        fi
+      fi
+      break
+    fi
+  done
+fi
+
 ST=""
 STATUS_FILE=""
 for f in $(ls -t /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status 2>/dev/null); do
@@ -35,9 +53,15 @@ LOG=""
 if [ -n "$STATUS_FILE" ]; then
   BUILD_DIR=$(dirname "$STATUS_FILE")
   ST=$(cat "$STATUS_FILE" 2>/dev/null)
-  LOG="$BUILD_DIR/build.log"
+  if [ -s "$BUILD_DIR/build.log" ]; then
+    LOG="$BUILD_DIR/build.log"
+  elif [ -s "$BUILD_DIR/build.log.failed" ]; then
+    LOG="$BUILD_DIR/build.log.failed"
+  elif [ -s "$BUILD_DIR/build.log.prev" ]; then
+    LOG="$BUILD_DIR/build.log.prev"
+  fi
 else
-  LOG=$(ls -t /mnt/a16/build.log /mnt/a17/build.log /mnt/recovery/build.log 2>/dev/null | head -n 1)
+  LOG=$(ls -t /mnt/a16/build.log /mnt/a16/build.log.failed /mnt/a17/build.log /mnt/a17/build.log.failed /mnt/recovery/build.log 2>/dev/null | head -n 1)
   [ -n "$LOG" ] && BUILD_DIR=$(dirname "$LOG")
   ST="NO_BUILD_RECORDED"
 fi
@@ -181,20 +205,105 @@ def collect_build_status(vm: dict) -> dict:
 
 
 def get_active_log_path(vm: dict) -> str:
-    """Return the log belonging to the newest build status file."""
+    """Return the log belonging to the newest build status file or latest log file."""
     script = (
-        'f=$(ls -t /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status '
-        '2>/dev/null | head -n 1); '
-        'if [ -n "$f" ]; then dirname "$f"; '
-        'else ls -t /mnt/a16/build.log /mnt/a17/build.log /mnt/recovery/build.log '
-        '2>/dev/null | head -n 1 | xargs -r dirname; fi'
+        'if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then '
+        'for d in /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-*; do '
+        'if [ -b "$d" ]; then mkdir -p /mnt/a16; sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/a16 2>/dev/null || true; break; fi; done; '
+        'fi; '
+        'for f in $(ls -t /mnt/a16/build.status /mnt/a17/build.status /mnt/recovery/build.status 2>/dev/null); do '
+        'd=$(dirname "$f"); '
+        'if [ -s "$d/build.log" ]; then echo "$d/build.log"; exit 0; '
+        'elif [ -s "$d/build.log.failed" ]; then echo "$d/build.log.failed"; exit 0; '
+        'elif [ -s "$d/build.log.prev" ]; then echo "$d/build.log.prev"; exit 0; '
+        'fi; done; '
+        'ls -t /mnt/a16/build.log /mnt/a16/build.log.failed /mnt/a17/build.log /mnt/recovery/build.log 2>/dev/null | head -n 1'
     )
     res = vm_exec(vm, script, check=False, timeout=20)
-    directory = (res.stdout or "").replace("\r", "").strip().splitlines()
-    if not directory:
-        return ""
-    path = directory[-1].strip()
-    return f"{path.rstrip('/')}/build.log" if path else ""
+    lines = (res.stdout or "").replace("\r", "").strip().splitlines()
+    return lines[-1].strip() if lines else ""
+
+
+def list_available_build_logs(vm: dict) -> list[str]:
+    """Return a list of all existing build logs across VM mounts."""
+    script = (
+        'if ! mountpoint -q /mnt/a16 && ! mountpoint -q /mnt/a17 && ! mountpoint -q /mnt/recovery; then '
+        'for d in /dev/disk/by-id/google-rom-general /dev/disk/by-id/google-rom-*; do '
+        'if [ -b "$d" ]; then mkdir -p /mnt/a16; sudo mount -o discard,defaults,noatime,nofail "$d" /mnt/a16 2>/dev/null || true; break; fi; done; '
+        'fi; '
+        'ls -t /mnt/a16/build.log /mnt/a16/build.log.failed /mnt/a16/build.log.prev /mnt/a16/logs/build*.log '
+        '/mnt/a17/build.log /mnt/a17/build.log.failed /mnt/a17/build.log.prev /mnt/a17/logs/build*.log '
+        '/mnt/recovery/build.log /mnt/recovery/build.log.failed /mnt/recovery/build.log.prev /mnt/recovery/logs/build*.log 2>/dev/null || true'
+    )
+    res = vm_exec(vm, script, check=False, timeout=20)
+    return [
+        l.strip() for l in (res.stdout or "").replace("\r", "").splitlines()
+        if l.strip() and (l.strip().endswith(".log") or l.strip().endswith(".failed") or l.strip().endswith(".prev"))
+    ]
+
+
+def get_metadata_build_status(vm: dict) -> dict:
+    """Read last known build status & error from GCP instance metadata (works while VM is offline)."""
+    if not vm or not vm.get("instance") or not vm.get("zone"):
+        return {}
+    import json
+    from cli.services.vm import run_gcloud
+    args = [
+        "compute", "instances", "describe", vm["instance"],
+        f"--zone={vm['zone']}",
+        "--format=json",
+    ]
+    if vm.get("project"):
+        args.append(f"--project={vm['project']}")
+    res = run_gcloud(args, check=False, timeout=15)
+    if res.returncode != 0 or not res.stdout:
+        return {}
+    try:
+        info = json.loads(res.stdout)
+    except Exception:
+        return {}
+    out = {}
+    for item in info.get("metadata", {}).get("items", []) or []:
+        k = item.get("key")
+        v = item.get("value") or ""
+        if k in ("last-build-status", "last-build-error", "last-build-timestamp", "upload-links"):
+            out[k] = v
+    return out
+
+
+def write_metadata_build_status(vm: dict, status: str, error: str = "") -> bool:
+    """Save build status & root error to GCP instance metadata from the Mac."""
+    if not vm or not vm.get("instance") or not vm.get("zone") or not status:
+        return False
+    import tempfile
+    import time
+    from cli.services.vm import run_gcloud
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+    args = [
+        "compute", "instances", "add-metadata", vm["instance"],
+        f"--zone={vm['zone']}",
+        f"--metadata=last-build-status={status.strip()},last-build-timestamp={stamp}",
+    ]
+    if vm.get("project"):
+        args.append(f"--project={vm['project']}")
+
+    tf_path = None
+    try:
+        if error:
+            with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as tf:
+                tf.write(error.strip() + "\n")
+                tf_path = tf.name
+            args.append(f"--metadata-from-file=last-build-error={tf_path}")
+        res = run_gcloud(args, check=False, timeout=20)
+        return res.returncode == 0
+    except Exception:
+        return False
+    finally:
+        if tf_path:
+            try:
+                Path(tf_path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def follow_live_logs(vm: dict, lines: int = 400, log_path: str = "") -> int:

@@ -389,6 +389,7 @@ tmux rename-window {shlex.quote(win_label)} 2>/dev/null || true
 sudo touch /run/gcp-build-active 2>/dev/null || true
 sudo rm -f /run/gcp-build-shutdown-pending 2>/dev/null || true
 sudo mkdir -p {q_mp}
+echo {q_mp} > {q_mp}/.last_mount 2>/dev/null || true
 echo {shlex.quote(marker)} > {q_target} 2>/dev/null || true
 if [ {shlex.quote(branch)} = 'recovery' ] && [ {q_mp} != '/mnt/recovery' ]; then
     sudo mkdir -p {q_mp}/recovery && sudo ln -sfn {q_mp}/recovery /mnt/recovery
@@ -422,6 +423,11 @@ else
 fi
 
 if [ "$BUILD_EXIT" -eq 0 ]; then
+    if [ -f {q_log} ]; then
+        mkdir -p {q_mp}/logs 2>/dev/null || true
+        cp -f {q_log} {q_mp}/build.log.prev 2>/dev/null || true
+        cp -f {q_log} "{q_mp}/logs/build_$(date +%Y%m%d_%H%M%S).log" 2>/dev/null || true
+    fi
     if command -v script >/dev/null 2>&1; then
         script -qefc "stdbuf -oL -eL python3 $BUILD_SCRIPT_TMP {command}" {q_log}
         BUILD_EXIT=$?
@@ -438,12 +444,10 @@ if [ "$BUILD_EXIT" -eq 0 ]; then
     echo "BUILD_STATUS: SUCCESS ($BUILD_VARIANT) - $(date)" > {q_status} 2>/dev/null || true
     [ -f "$HOME/.upload_links.log" ] && sudo cp -f "$HOME/.upload_links.log" "{mount_point}/.upload_links.log" 2>/dev/null || true
     python3 -c '
-import os
+import os, importlib.util
 p = os.path.expanduser("~/.gcp_farm/scripts/upload.py")
-if not os.path.exists(p):
-    p = os.path.expanduser("~/upload.py")
+if not os.path.exists(p): p = os.path.expanduser("~/upload.py")
 if os.path.exists(p):
-    import importlib.util
     spec = importlib.util.spec_from_file_location("u", p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -451,6 +455,8 @@ if os.path.exists(p):
     if os.path.exists(log) and hasattr(mod, "_update_gcp_metadata_links"):
         lines = [l.strip() for l in open(log).readlines() if l.strip()]
         mod._update_gcp_metadata_links(lines)
+    if hasattr(mod, "_update_gcp_metadata_build_status"):
+        mod._update_gcp_metadata_build_status("SUCCESS ('"$BUILD_VARIANT"') - $(date)")
 ' 2>/dev/null || true
     echo -e '\\n\\033[1;32m============================================================\\033[0m'
     echo -e '\\033[1;32m [SUCCESS] Build and upload completed successfully!\\033[0m'
@@ -459,10 +465,38 @@ else
     tmux set-option -t rom-build @build_icon "✗" 2>/dev/null || true
     tmux set-option -t rom-build status-left "#[bg=colour196,fg=colour255,bold] ✗ {build_label} #[bg=colour238,fg=colour255,bold] {detail_label} #[bg=colour235] " 2>/dev/null || true
     echo "BUILD_STATUS: FAILED (Exit Code $BUILD_EXIT) - $(date)" > {q_status} 2>/dev/null || true
+    mkdir -p {q_mp}/logs 2>/dev/null || true
+    FAIL_LOG="{q_mp}/logs/build_failed_$(date +%Y%m%d_%H%M%S).log"
+    cp -f {q_log} "{q_mp}/build.log.failed" 2>/dev/null || true
+    cp -f {q_log} "$FAIL_LOG" 2>/dev/null || true
+    echo "FAILED_LOG: {mount_point}/build.log.failed" >> {q_status} 2>/dev/null || true
+    echo "FAILED_ARCHIVE: $FAIL_LOG" >> {q_status} 2>/dev/null || true
+    python3 -c '
+import os, importlib.util
+p = os.path.expanduser("~/.gcp_farm/scripts/upload.py")
+if not os.path.exists(p): p = os.path.expanduser("~/upload.py")
+if os.path.exists(p):
+    spec = importlib.util.spec_from_file_location("u", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    log_p = "{mount_point}/build.log"
+    root_err = ""
+    if os.path.exists(log_p):
+        try:
+            lines = open(log_p, errors="replace").readlines()[-150:]
+            errs = [l.strip() for l in lines if any(k in l.lower() for k in ("failed:", "ninja: build stopped", "error:"))]
+            root_err = "\n".join(errs[-8:])
+        except Exception:
+            pass
+    if hasattr(mod, "_update_gcp_metadata_build_status"):
+        mod._update_gcp_metadata_build_status("FAILED (Exit Code '"$BUILD_EXIT"') - $(date)", root_err)
+' 2>/dev/null || true
     echo -e '\\n\\033[1;31m============================================================\\033[0m'
     echo -e "\\033[1;31m [ERROR] Build stopped or failed with exit code $BUILD_EXIT!\\033[0m"
     echo -e '\\033[1;31m============================================================\\033[0m'
     echo "Full build output is saved at: {mount_point}/build.log"
+    echo "A permanent failure copy is saved at: {mount_point}/build.log.failed"
+    echo "Historical failure archive is saved at: $FAIL_LOG"
 fi
 
 sudo rm -f /run/gcp-build-active 2>/dev/null || true
@@ -833,6 +867,20 @@ def dispatch_build(
         try:
             from cli.services.link import sync_links_from_vm
             sync_links_from_vm(vm)
+        except Exception:
+            pass
+        try:
+            from cli.services.monitor import write_metadata_build_status, collect_build_status
+            b_data = collect_build_status(vm)
+            b_status = b_data.get("status", "")
+            if b_status and b_status != "NO_BUILD_RECORDED":
+                err_text = "\n".join(b_data.get("errors", []))
+                write_metadata_build_status(vm, b_status, err_text)
+        except Exception:
+            pass
+        try:
+            from cli.services.download import auto_download_failed_log
+            auto_download_failed_log(vm, mount_point)
         except Exception:
             pass
     return True
