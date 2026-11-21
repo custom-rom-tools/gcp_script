@@ -437,6 +437,21 @@ if [ "$BUILD_EXIT" -eq 0 ]; then
     tmux set-option -t rom-build status-left "#[bg=colour82,fg=colour232,bold] ✓ {build_label} #[bg=colour238,fg=colour255,bold] {detail_label} #[bg=colour235] " 2>/dev/null || true
     echo "BUILD_STATUS: SUCCESS ($BUILD_VARIANT) - $(date)" > {q_status} 2>/dev/null || true
     [ -f "$HOME/.upload_links.log" ] && sudo cp -f "$HOME/.upload_links.log" "{mount_point}/.upload_links.log" 2>/dev/null || true
+    python3 -c '
+import os
+p = os.path.expanduser("~/.gcp_farm/scripts/upload.py")
+if not os.path.exists(p):
+    p = os.path.expanduser("~/upload.py")
+if os.path.exists(p):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("u", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    log = os.path.expanduser("~/.upload_links.log")
+    if os.path.exists(log) and hasattr(mod, "_update_gcp_metadata_links"):
+        lines = [l.strip() for l in open(log).readlines() if l.strip()]
+        mod._update_gcp_metadata_links(lines)
+' 2>/dev/null || true
     echo -e '\\n\\033[1;32m============================================================\\033[0m'
     echo -e '\\033[1;32m [SUCCESS] Build and upload completed successfully!\\033[0m'
     echo -e '\\033[1;32m============================================================\\033[0m'
@@ -455,9 +470,9 @@ sudo rm -f /run/gcp-build-active 2>/dev/null || true
 if [ "$WRAPPER_SHUTDOWN" = 'true' ] && [ "$BUILD_EXIT" -eq 0 ]; then
     sudo rm -f /run/gcp-build-shutdown-pending 2>/dev/null || true
     echo ""
-    echo -e '\\033[1;33m>>> Build succeeded! Auto-shutdown requested: Powering off VM in 15 seconds...\\033[0m'
+    echo -e '\\033[1;33m>>> Build succeeded! Auto-shutdown requested: Powering off VM in 30 seconds...\\033[0m'
     echo -e '\\033[1;33m>>> Press any key to cancel shutdown and keep session open...\\033[0m'
-    if read -t 15 -n 1 -s -r; then
+    if read -t 30 -n 1 -s -r; then
         echo -e '\\n\\033[1;32m>>> Auto-shutdown cancelled by user. Session will remain open.\\033[0m'
         date +%s | sudo tee /run/gcp-build-shutdown-pending >/dev/null 2>&1 || true
     else
@@ -795,8 +810,26 @@ def dispatch_build(
     print_divider()
 
     if attach_live:
+        import threading
+        stop_watcher = threading.Event()
+
+        def _link_sync_watcher():
+            from cli.services.link import sync_links_from_vm
+            while not stop_watcher.is_set():
+                stop_watcher.wait(10)
+                if stop_watcher.is_set():
+                    break
+                try:
+                    sync_links_from_vm(vm)
+                except Exception:
+                    pass
+
+        watcher_thread = threading.Thread(target=_link_sync_watcher, daemon=True)
+        watcher_thread.start()
+
         print("\nConnecting to live build session in tmux... (Detach: Ctrl+B then D)\n")
         attach_tmux_session(vm)
+        stop_watcher.set()
         try:
             from cli.services.link import sync_links_from_vm
             sync_links_from_vm(vm)

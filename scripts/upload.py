@@ -811,6 +811,81 @@ def record_links(entries: list[tuple[str, str, str]], remote_subdir: str) -> Non
         except Exception:
             pass
 
+    # Persist directly into GCP instance metadata so links are readable even if VM auto-shuts down
+    _update_gcp_metadata_links(lines)
+
+
+def _update_gcp_metadata_links(lines: list[str]) -> bool:
+    """Save upload links to GCP instance metadata via Compute REST API so they survive shutdown."""
+    if not lines:
+        return False
+    try:
+        import json
+        import urllib.request
+        hdr = {"Metadata-Flavor": "Google"}
+        token_req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+            headers=hdr,
+        )
+        token = json.loads(urllib.request.urlopen(token_req, timeout=4).read().decode())["access_token"]
+
+        proj_req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/project/project-id",
+            headers=hdr,
+        )
+        project = urllib.request.urlopen(proj_req, timeout=4).read().decode().strip()
+
+        inst_req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/name",
+            headers=hdr,
+        )
+        instance = urllib.request.urlopen(inst_req, timeout=4).read().decode().strip()
+
+        zone_req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/zone",
+            headers=hdr,
+        )
+        zone = urllib.request.urlopen(zone_req, timeout=4).read().decode().strip().split("/")[-1]
+
+        inst_url = f"https://compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{instance}"
+        req_inst = urllib.request.Request(inst_url, headers={"Authorization": f"Bearer {token}"})
+        inst_data = json.loads(urllib.request.urlopen(req_inst, timeout=6).read().decode())
+        meta = inst_data.get("metadata", {})
+        fp = meta.get("fingerprint", "")
+        items = meta.get("items", []) or []
+
+        existing: list[str] = []
+        for it in items:
+            if it.get("key") == "upload-links":
+                existing = (it.get("value") or "").splitlines()
+                break
+
+        combined: list[str] = []
+        seen = set()
+        for l in existing + lines:
+            l_clean = l.strip()
+            if l_clean and l_clean not in seen:
+                seen.add(l_clean)
+                combined.append(l_clean)
+
+        new_val = "\n".join(combined[-100:]) + ("\n" if combined else "")
+        new_items = [it for it in items if it.get("key") != "upload-links"]
+        new_items.append({"key": "upload-links", "value": new_val})
+
+        set_url = f"{inst_url}/setMetadata"
+        body = json.dumps({"fingerprint": fp, "items": new_items}).encode("utf-8")
+        req_set = urllib.request.Request(
+            set_url,
+            data=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req_set, timeout=10)
+        print(">>> [GCP] Upload links successfully synchronized to cloud instance metadata.")
+        return True
+    except Exception as e:
+        return False
+
 def main():
     args = sys.argv[1:]
     do_sf = None
