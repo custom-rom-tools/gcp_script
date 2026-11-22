@@ -39,8 +39,9 @@ def submenu_live_tmux(vm: dict):
     clear_screen()
     print_header("Live Build Session (tmux)")
     print(">>> Attaching to 'rom-build'... (Detach: Ctrl+B then D)\n")
-    attach_tmux_session(vm)
-    pause()
+    rc = attach_tmux_session(vm)
+    if rc != 0:
+        pause()
 
 
 def _print_build_dashboard(vm: dict) -> dict:

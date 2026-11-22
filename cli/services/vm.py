@@ -90,11 +90,11 @@ def run_gcloud(args: list[str], check: bool = True, timeout: int | None = None) 
     )
 
 
-def check_gcloud_auth() -> str | None:
+def check_gcloud_auth(refresh: bool = False) -> str | None:
     """Return the active Google Cloud account email, or None."""
     now = time.time()
-    ttl = 30.0 if _AUTH_CACHE["value"] else 5.0
-    if now - _AUTH_CACHE["checked"] < ttl:
+    ttl = 300.0 if _AUTH_CACHE["value"] else 15.0
+    if not refresh and (now - _AUTH_CACHE["checked"] < ttl):
         return _AUTH_CACHE["value"]
     try:
         res = run_gcloud(["auth", "list", "--format=json"], check=False, timeout=30)
@@ -372,13 +372,14 @@ def check_ssh_port(ip: str, timeout: float = 1.0) -> bool:
         return False
 
 
-def get_vm_state(vm: dict) -> tuple[str, str]:
-    """Return ``(status, external_ip)`` using a 4-second cache."""
+def get_vm_state(vm: dict, refresh: bool = False) -> tuple[str, str]:
+    """Return ``(status, external_ip)`` using a 15-second cache and fast SSH probe."""
     now = time.time()
     state_path = _state_cache_path(vm)
-    cached = _read_json(state_path, None)
-    if cached and now - float(cached.get("ts", 0)) < 4:
-        return str(cached.get("status", "UNKNOWN")), str(cached.get("ip", ""))
+    if not refresh:
+        cached = _read_json(state_path, None)
+        if cached and now - float(cached.get("ts", 0)) < 15:
+            return str(cached.get("status", "UNKNOWN")), str(cached.get("ip", ""))
 
     ip_path = _ip_cache_path(vm)
     try:
@@ -437,11 +438,11 @@ def get_vm_ip(vm: dict) -> str:
 
 
 def get_vm_info(vm: dict, refresh: bool = False) -> dict | None:
-    """Fetch the JSON description of an instance (cached for 5 seconds)."""
+    """Fetch the JSON description of an instance (cached for 30 seconds)."""
     key = f"{vm.get('project', '')}:{vm.get('zone', '')}:{vm.get('instance', '')}"
     now = time.time()
     cached = _VM_INFO_CACHE.get(key)
-    if not refresh and cached and now - cached[0] < 5:
+    if not refresh and cached and now - cached[0] < 30:
         return cached[1]
     args = [
         "compute", "instances", "describe", vm["instance"],

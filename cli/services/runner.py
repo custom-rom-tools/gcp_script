@@ -934,23 +934,30 @@ def dispatch_build(
         print("\nConnecting to live build session in tmux... (Detach: Ctrl+B then D)\n")
         attach_tmux_session(vm)
         stop_watcher.set()
-        try:
-            from cli.services.link import sync_links_from_vm
-            sync_links_from_vm(vm)
-        except Exception:
-            pass
-        try:
-            from cli.services.monitor import write_metadata_build_status, collect_build_status
-            b_data = collect_build_status(vm)
-            b_status = b_data.get("status", "")
-            if b_status and b_status != "NO_BUILD_RECORDED":
-                err_text = "\n".join(b_data.get("errors", []))
-                write_metadata_build_status(vm, b_status, err_text)
-        except Exception:
-            pass
-        try:
-            from cli.services.download import auto_download_failed_log
-            auto_download_failed_log(vm, mount_point)
-        except Exception:
-            pass
+
+        # Run post-detach metadata update, link synchronization, and failure log
+        # checks in a background daemon thread so the terminal immediately clears
+        # and returns to the interactive dashboard without freezing on [exited].
+        def _post_detach_cleanup():
+            try:
+                from cli.services.link import sync_links_from_vm
+                sync_links_from_vm(vm)
+            except Exception:
+                pass
+            try:
+                from cli.services.monitor import write_metadata_build_status, collect_build_status
+                b_data = collect_build_status(vm)
+                b_status = b_data.get("status", "")
+                if b_status and b_status != "NO_BUILD_RECORDED":
+                    err_text = "\n".join(b_data.get("errors", []))
+                    write_metadata_build_status(vm, b_status, err_text)
+            except Exception:
+                pass
+            try:
+                from cli.services.download import auto_download_failed_log
+                auto_download_failed_log(vm, mount_point)
+            except Exception:
+                pass
+
+        threading.Thread(target=_post_detach_cleanup, daemon=True).start()
     return True

@@ -53,13 +53,15 @@ def reload_all():
 
 def run_build_dashboard(vm: dict):
     """Main Build & Operations Dashboard interactive loop."""
+    do_refresh = False
     while True:
         clear_screen()
-        account = check_gcloud_auth() or "Not Authenticated"
-        vm_info = get_vm_info(vm)
-        vm_running = bool(vm_info and vm_info.get("status") == "RUNNING")
+        account = check_gcloud_auth(refresh=do_refresh) or "Not Authenticated"
+        vm_state, _ = get_vm_state(vm, refresh=do_refresh)
+        vm_running = (vm_state == "RUNNING")
         status_color = GREEN if vm_running else RED
         status_text = "ONLINE" if vm_running else "OFFLINE"
+        do_refresh = False
 
         print_header("GCP BUILD & DOWNLOAD MANAGER")
         print_status("Account", account, GREEN)
