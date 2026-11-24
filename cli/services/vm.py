@@ -31,8 +31,8 @@ SSH_KEY = Path.home() / ".ssh" / "google_compute_engine"
 SSH_SOCK = "/tmp/gcp_rom_ssh_%h_%p_%r"
 CACHE_DIR = Path(tempfile.gettempdir())
 
-MACHINE_TYPES = ["c2d-standard-16", "t2d-standard-16", "n2-standard-16", "n2d-standard-16", "c2-standard-16"]
-DEFAULT_MACHINE_TYPE = "c2d-standard-16"
+MACHINE_TYPES = ["t2d-standard-16", "n2d-standard-16", "c2d-standard-16", "n2-standard-16", "c2-standard-16"]
+DEFAULT_MACHINE_TYPE = "t2d-standard-16"
 DEFAULT_ZONE = "us-central1-a"
 DEFAULT_GENERAL_DISK = "gcp-general-disk"
 
@@ -740,7 +740,7 @@ def _post_ssh_health_check(vm: dict) -> None:
 # Power lifecycle
 # ---------------------------------------------------------------------------
 def start_vm_with_failover(vm: dict) -> bool:
-    """Power on the VM, cascading through machine types when capacity is exhausted."""
+    """Power on the VM, always starting with the cheapest machine type and cascading through fallbacks."""
     if is_vm_running(vm):
         return True
 
@@ -752,52 +752,57 @@ def start_vm_with_failover(vm: dict) -> bool:
         return True
     current_mt = current_mt or DEFAULT_MACHINE_TYPE
 
-    print(f">>> VM {vm['instance']} is currently {status} ({current_mt}). Powering on...")
-    args = ["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"] + _gcloud_scope(vm)
-    res = run_gcloud(args, check=False)
-    if res.returncode == 0:
-        print(f">>> VM {vm['instance']} started successfully with {current_mt}!")
-        invalidate_vm_cache(vm)
-        return wait_for_ssh(vm)
+    print(f">>> VM {vm['instance']} is currently {status}.")
+    print(">>> Cost optimization active: starting with cheapest machine type first...")
 
-    err = f"{res.stdout}\n{res.stderr}"
-    print(f">>> Start failed with {current_mt}:\n{err.strip()}\n")
-    exhausted = any(token.lower() in err.lower() for token in (
-        "resource_pool_exhausted", "zone_resource_pool_exhausted",
-        "not have enough resources", "does not have enough resources",
-        "quota", "exceeded",
-    ))
-    if exhausted:
-        print(f">>> Capacity or quota limit reached for {current_mt} in {vm['zone']}.")
-        print(">>> Cascading through available 16-core machine types (c2d -> t2d -> n2 -> n2d -> c2)...")
-        for machine_type in MACHINE_TYPES:
-            if machine_type == current_mt:
-                continue
-            print(f"\n>>> Switching in-place to candidate: {machine_type}...")
-            run_gcloud(
+    active_mt = current_mt
+    for idx, candidate in enumerate(MACHINE_TYPES, 1):
+        if active_mt != candidate:
+            print(f"\n>>> [{idx}/{len(MACHINE_TYPES)}] Setting machine type to {candidate} (cheapest available)...")
+            res_set = run_gcloud(
                 ["compute", "instances", "set-machine-type", vm["instance"],
-                 f"--machine-type={machine_type}", f"--zone={vm['zone']}"] + _gcloud_scope(vm) + ["--quiet"],
+                 f"--machine-type={candidate}", f"--zone={vm['zone']}"] + _gcloud_scope(vm) + ["--quiet"],
                 check=False,
             )
-            print(f">>> Attempting to power on with {machine_type}...")
+            if res_set.returncode != 0:
+                print(f">>> Notice: Could not set machine type to {candidate}: {(res_set.stderr or res_set.stdout).strip()}")
+                continue
+            active_mt = candidate
+
+        print(f">>> [{idx}/{len(MACHINE_TYPES)}] Attempting to power on with {candidate}...")
+        start_res = run_gcloud(
+            ["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"] + _gcloud_scope(vm),
+            check=False,
+        )
+        if start_res.returncode == 0:
+            print(f">>> VM {vm['instance']} started successfully with {candidate}!")
+            invalidate_vm_cache(vm)
+            return wait_for_ssh(vm)
+
+        err = f"{start_res.stdout}\n{start_res.stderr}".strip()
+        print(f">>> Start failed with {candidate}:\n{err}\n")
+
+        exhausted = any(token.lower() in err.lower() for token in (
+            "resource_pool_exhausted", "zone_resource_pool_exhausted",
+            "not have enough resources", "does not have enough resources",
+            "quota", "exceeded",
+        ))
+        if exhausted:
+            print(f">>> {candidate} unavailable (capacity or quota limit). Switching to next cheapest candidate...")
+        else:
+            print(f">>> Retrying start on {candidate} once...")
             retry = run_gcloud(
-                ["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"]
-                + _gcloud_scope(vm),
+                ["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"] + _gcloud_scope(vm),
                 check=False,
             )
             if retry.returncode == 0:
-                print(f">>> Resources acquired! VM {vm['instance']} is RUNNING with {machine_type}!")
+                print(f">>> VM {vm['instance']} started successfully with {candidate}!")
                 invalidate_vm_cache(vm)
                 return wait_for_ssh(vm)
-            print(f">>> {machine_type} also out of capacity in {vm['zone']}.")
-        print(f">>> All 16-vCPU 64GB machine types are temporarily exhausted in {vm['zone']}.")
-        return False
+            print(f">>> Retry on {candidate} failed. Switching to next cheapest candidate...")
 
-    print(">>> Retrying start once...")
-    run_gcloud(["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"]
-               + _gcloud_scope(vm), check=False)
-    invalidate_vm_cache(vm)
-    return wait_for_ssh(vm)
+    print(f">>> Error: All 16-vCPU machine types failed to power on in {vm['zone']}.")
+    return False
 
 
 def ensure_vm_online(vm: dict) -> bool:
