@@ -31,7 +31,7 @@ SSH_KEY = Path.home() / ".ssh" / "google_compute_engine"
 SSH_SOCK = "/tmp/gcp_rom_ssh_%h_%p_%r"
 CACHE_DIR = Path(tempfile.gettempdir())
 
-MACHINE_TYPES = ["c2d-standard-16", "t2d-standard-16", "c2-standard-16"]
+MACHINE_TYPES = ["c2d-standard-16", "t2d-standard-16", "n2-standard-16", "n2d-standard-16", "c2-standard-16"]
 DEFAULT_MACHINE_TYPE = "c2d-standard-16"
 DEFAULT_ZONE = "us-central1-a"
 DEFAULT_GENERAL_DISK = "gcp-general-disk"
@@ -762,13 +762,14 @@ def start_vm_with_failover(vm: dict) -> bool:
 
     err = f"{res.stdout}\n{res.stderr}"
     print(f">>> Start failed with {current_mt}:\n{err.strip()}\n")
-    exhausted = any(token in err for token in (
-        "RESOURCE_POOL_EXHAUSTED", "ZONE_RESOURCE_POOL_EXHAUSTED",
+    exhausted = any(token.lower() in err.lower() for token in (
+        "resource_pool_exhausted", "zone_resource_pool_exhausted",
         "not have enough resources", "does not have enough resources",
+        "quota", "exceeded",
     ))
     if exhausted:
-        print(f">>> Capacity exhausted for {current_mt} in {vm['zone']}.")
-        print(">>> Cascading through 16-core machine types (c2d -> t2d -> c2)...")
+        print(f">>> Capacity or quota limit reached for {current_mt} in {vm['zone']}.")
+        print(">>> Cascading through available 16-core machine types (c2d -> t2d -> n2 -> n2d -> c2)...")
         for machine_type in MACHINE_TYPES:
             if machine_type == current_mt:
                 continue

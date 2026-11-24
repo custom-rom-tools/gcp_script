@@ -127,7 +127,9 @@ def submenu_machine_type(vm: dict):
         descriptions = {
             "c2d-standard-16": "AMD EPYC Milan (Compute-Opt)   ~$0.726/hr  (Fastest)",
             "t2d-standard-16": "AMD EPYC Milan (1:1 Cores)     ~$0.675/hr  (Cheapest)",
-            "c2-standard-16": "Intel Cascade Lake (Comp-Opt)  ~$0.835/hr  (Intel Fallback)",
+            "n2-standard-16":  "Intel Ice Lake (Balanced)      ~$0.778/hr  (High Quota)",
+            "n2d-standard-16": "AMD EPYC Rome (Balanced)       ~$0.698/hr  (AMD Rome)",
+            "c2-standard-16":  "Intel Cascade Lake (Comp-Opt)  ~$0.835/hr  (Intel Fallback)",
         }
         for idx, machine in enumerate(MACHINE_TYPES, 1):
             marker = f"{GREEN}* {NC}" if machine == current_mt else "  "
