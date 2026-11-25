@@ -39,12 +39,12 @@ LOCAL_LOGS_DIR = Path.home() / ".gcp_farm" / "logs"
 PATTERNS = {
     "rom": ("*.zip",),
     "recovery": ("*OrangeFox*", "*twrp*", "recovery.img", "recovery.zip"),
-    "kernel": ("boot.img",),
+    "kernel": ("boot.img", "dtbo.img"),
 }
 ARTIFACT_NAMES = {
     "rom": "ROM package",
     "recovery": "recovery package",
-    "kernel": "kernel image",
+    "kernel": "kernel images",
 }
 RECOVERY_HINTS = re.compile(r"(orangefox|twrp|recovery)", re.IGNORECASE)
 

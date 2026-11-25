@@ -280,6 +280,10 @@ def discover_candidates(search_dir: Path, build_type: str, remote_subdir: str = 
             if imgs:
                 imgs.sort(key=get_build_sort_key, reverse=True)
                 candidates.append(imgs[0])
+            dtbo_imgs = [i for i in all_imgs if i.name.lower() == "dtbo.img"]
+            if dtbo_imgs:
+                dtbo_imgs.sort(key=get_build_sort_key, reverse=True)
+                candidates.append(dtbo_imgs[0])
 
         case "rom" | _:
             all_zips = list(search_dir.glob("*.zip"))

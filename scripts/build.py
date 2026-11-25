@@ -366,7 +366,8 @@ def compile_rom(
     ]
     if installclean:
         commands.append("m installclean")
-    commands.append(f"m -j{nproc} {shlex.quote(build_target)}")
+    targets = " ".join(shlex.quote(t) for t in build_target.split())
+    commands.append(f"m -j{nproc} {targets}")
 
     label = f">>> Compiling {build_target} ({lunch_targets[0]})"
     run_command(shell_join(commands), cwd=work_dir, label=label, pty=True)
@@ -682,7 +683,8 @@ def compile_recovery(
     if vendorsetup:
         commands.append(f"set +e; {vendorsetup}; set -e")
     commands.append(f"{{ {lunch_chain}; }}")
-    commands.append(f"m -j{nproc} {shlex.quote(build_target)}")
+    targets = " ".join(shlex.quote(t) for t in build_target.split())
+    commands.append(f"m -j{nproc} {targets}")
 
     label = f">>> Compiling {build_target} ({lunch_targets[0]})"
     run_command(shell_join(commands), cwd=work_dir, label=label, pty=True)

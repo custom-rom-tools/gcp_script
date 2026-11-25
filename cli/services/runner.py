@@ -224,7 +224,7 @@ def check_build_slot(vm: dict) -> bool:
         return False
 
     cmd = r"""
-active=$(ps -eo pid=,etime=,args= | grep -E "[g]cp_build_script|[s]oong_ui .*--build-mode|[/]build/soong/bin/m .*(recoveryimage|otapackage|bacon|droid|bootimage)|[r]epo sync|[n]inja|[c]kati" || true)
+active=$(ps -eo pid=,etime=,args= | grep -E "[g]cp_build_script|[s]oong_ui .*--build-mode|[/]build/soong/bin/m .*(recoveryimage|otapackage|bacon|droid|bootimage|dtboimage)|[r]epo sync|[n]inja|[c]kati" || true)
 if [ -e /run/gcp-build-active ]; then
     active="$active
 Build activity marker: /run/gcp-build-active"

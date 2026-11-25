@@ -3,7 +3,7 @@
     "name": "Realme Atoll Kernel",
     "aliases": ["kernel", "atoll"],
     "default_variant": "userdebug",
-    "build_target": "bootimage",
+    "build_target": "bootimage dtboimage",
     "versions": {
       "16": {
         "name": "Android 16",
