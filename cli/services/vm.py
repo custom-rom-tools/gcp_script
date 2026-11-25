@@ -736,11 +736,52 @@ def _post_ssh_health_check(vm: dict) -> None:
         pass
 
 
+MACHINE_TYPE_DETAILS = {
+    "t2d-standard-16": ("~$0.675/hr", "AMD Milan Tau (Cheapest)"),
+    "n2d-standard-16": ("~$0.698/hr", "AMD Rome Balanced"),
+    "c2d-standard-16": ("~$0.726/hr", "AMD Milan Compute-Opt (Fastest)"),
+    "n2-standard-16":  ("~$0.778/hr", "Intel Ice Lake (High Quota)"),
+    "c2-standard-16":  ("~$0.835/hr", "Intel Cascade Lake (Fallback)"),
+}
+
+
+def _parse_gcloud_error(err: str, zone: str = "") -> str:
+    """Extract a concise, human-readable error summary from gcloud output."""
+    err_lower = err.lower()
+    if "zone_resource_pool_exhausted" in err_lower or "reason: stockout" in err_lower or "not have enough resources" in err_lower:
+        loc = f" in {zone}" if zone else ""
+        return f"Zone capacity exhausted (stockout{loc})"
+    if "quota" in err_lower and "exceeded" in err_lower:
+        for line in err.splitlines():
+            if "quota" in line.lower() and "exceeded" in line.lower():
+                clean = line.strip().lstrip("- ").strip()
+                if "ERROR: (gcloud.compute.instances.start)" in clean:
+                    clean = clean.split("ERROR: (gcloud.compute.instances.start)")[-1].strip().lstrip("- ").strip()
+                return clean
+        return "Quota exceeded for machine type"
+    for line in err.splitlines():
+        trimmed = line.strip()
+        if trimmed.startswith("message:"):
+            msg = trimmed[len("message:"):].strip().strip("'\"")
+            if len(msg) > 90:
+                msg = msg[:87] + "..."
+            return msg
+        if trimmed.startswith("ERROR:") and not trimmed.endswith("---"):
+            return trimmed
+    for line in err.splitlines():
+        trimmed = line.strip()
+        if trimmed and not trimmed.startswith("Starting instance") and not trimmed.startswith("..."):
+            return trimmed[:90]
+    return "Startup failed"
+
+
 # ---------------------------------------------------------------------------
 # Power lifecycle
 # ---------------------------------------------------------------------------
 def start_vm_with_failover(vm: dict) -> bool:
     """Power on the VM, always starting with the cheapest machine type and cascading through fallbacks."""
+    from cli.base import GREEN, YELLOW, RED, CYAN, BOLD, NC
+
     if is_vm_running(vm):
         return True
 
@@ -748,26 +789,32 @@ def start_vm_with_failover(vm: dict) -> bool:
     status = (info or {}).get("status", "UNKNOWN")
     current_mt = ((info or {}).get("machineType", "") or "").rstrip("/").split("/")[-1]
     if status == "RUNNING":
-        print(f">>> VM {vm['instance']} is already RUNNING in {vm['zone']}.")
+        print(f" {GREEN}✔{NC} VM {vm['instance']} is already RUNNING in {vm['zone']}.")
         return True
     current_mt = current_mt or DEFAULT_MACHINE_TYPE
 
-    print(f">>> VM {vm['instance']} is currently {status}.")
-    print(">>> Cost optimization active: starting with cheapest machine type first...")
+    print(f">>> VM '{vm['instance']}' is currently {BOLD}{status}{NC} (current machine: {current_mt}).")
+    print(f">>> {CYAN}Cost optimization active:{NC} starting with cheapest machine type first...\n")
 
     active_mt = current_mt
     for idx, candidate in enumerate(MACHINE_TYPES, 1):
+        price_tag, desc = MACHINE_TYPE_DETAILS.get(candidate, ("", ""))
+        detail_str = f" ({price_tag} - {desc})" if price_tag else ""
+
         if active_mt != candidate:
-            print(f"\n>>> [{idx}/{len(MACHINE_TYPES)}] Setting machine type to {candidate} (cheapest available)...")
+            print(f">>> [{idx}/{len(MACHINE_TYPES)}] Switching machine type to {BOLD}{candidate}{NC}{detail_str}...")
             res_set = run_gcloud(
                 ["compute", "instances", "set-machine-type", vm["instance"],
                  f"--machine-type={candidate}", f"--zone={vm['zone']}"] + _gcloud_scope(vm) + ["--quiet"],
                 check=False,
             )
             if res_set.returncode != 0:
-                print(f">>> Notice: Could not set machine type to {candidate}: {(res_set.stderr or res_set.stdout).strip()}")
+                clean_set_err = _parse_gcloud_error(f"{res_set.stdout}\n{res_set.stderr}", vm.get("zone", ""))
+                print(f"    {YELLOW}⚠ Notice:{NC} Could not set machine type to {candidate}: {clean_set_err}")
                 continue
             active_mt = candidate
+        else:
+            print(f">>> [{idx}/{len(MACHINE_TYPES)}] Candidate: {BOLD}{candidate}{NC}{detail_str}")
 
         print(f">>> [{idx}/{len(MACHINE_TYPES)}] Attempting to power on with {candidate}...")
         start_res = run_gcloud(
@@ -775,33 +822,40 @@ def start_vm_with_failover(vm: dict) -> bool:
             check=False,
         )
         if start_res.returncode == 0:
-            print(f">>> VM {vm['instance']} started successfully with {candidate}!")
+            print(f"\n {GREEN}✔ Resources acquired!{NC} VM {vm['instance']} is {GREEN}{BOLD}RUNNING{NC} with {candidate}!")
             invalidate_vm_cache(vm)
             return wait_for_ssh(vm)
 
         err = f"{start_res.stdout}\n{start_res.stderr}".strip()
-        print(f">>> Start failed with {candidate}:\n{err}\n")
+        clean_err = _parse_gcloud_error(err, vm.get("zone", ""))
 
         exhausted = any(token.lower() in err.lower() for token in (
             "resource_pool_exhausted", "zone_resource_pool_exhausted",
             "not have enough resources", "does not have enough resources",
             "quota", "exceeded",
         ))
+
         if exhausted:
-            print(f">>> {candidate} unavailable (capacity or quota limit). Switching to next cheapest candidate...")
+            print(f"    {RED}✖ Start failed:{NC} {clean_err}")
+            if idx < len(MACHINE_TYPES):
+                print(f"    {YELLOW}➔ Switching to next cheapest candidate...{NC}\n")
         else:
+            print(f"    {YELLOW}⚠ Non-capacity error:{NC} {clean_err}")
             print(f">>> Retrying start on {candidate} once...")
             retry = run_gcloud(
                 ["compute", "instances", "start", vm["instance"], f"--zone={vm['zone']}"] + _gcloud_scope(vm),
                 check=False,
             )
             if retry.returncode == 0:
-                print(f">>> VM {vm['instance']} started successfully with {candidate}!")
+                print(f"\n {GREEN}✔ Resources acquired!{NC} VM {vm['instance']} is {GREEN}{BOLD}RUNNING{NC} with {candidate}!")
                 invalidate_vm_cache(vm)
                 return wait_for_ssh(vm)
-            print(f">>> Retry on {candidate} failed. Switching to next cheapest candidate...")
+            clean_retry_err = _parse_gcloud_error(f"{retry.stdout}\n{retry.stderr}", vm.get("zone", ""))
+            print(f"    {RED}✖ Retry failed:{NC} {clean_retry_err}")
+            if idx < len(MACHINE_TYPES):
+                print(f"    {YELLOW}➔ Switching to next cheapest candidate...{NC}\n")
 
-    print(f">>> Error: All 16-vCPU machine types failed to power on in {vm['zone']}.")
+    print(f"\n{RED}✖ Error: All 16-vCPU machine types failed to power on in {vm['zone']}.{NC}")
     return False
 
 
@@ -876,7 +930,6 @@ def start_vm(vm: dict) -> bool:
         if ip:
             print(f"    External IP: {ip}")
     else:
-        print(f">>> VM '{vm['instance']}' is currently powered down.")
         if not start_vm_with_failover(vm):
             print(f" ✖ Could not power on VM '{vm['instance']}' (no capacity in {vm['zone']}).")
             return False
