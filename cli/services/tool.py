@@ -253,7 +253,7 @@ def deploy_watchdog(vm: dict) -> bool:
 
 
 def _github_fallback_cmd() -> str:
-    base = "https://raw.githubusercontent.com/custom-rom-tools/gcp_script/main"
+    base = "https://raw.githubusercontent.com/custom-rom-tools/gcp_script/main/scripts"
     return (
         "T=$(date +%s); "
         f"curl -sLf -H 'Cache-Control: no-cache, no-store' -H 'Pragma: no-cache' "
@@ -271,7 +271,7 @@ def setup_environment(vm: dict) -> bool:
         print(">>> Error: Target VM is offline and could not be started.")
         return False
 
-    scripts = [REPO_ROOT / name for name in ("setup_host.sh", "upload.py", "idle_watchdog.sh")]
+    scripts = [REPO_ROOT / "scripts" / name for name in ("setup_host.sh", "upload.py", "idle_watchdog.sh")]
     existing = [p for p in scripts if p.is_file()]
     if len(existing) == len(scripts):
         print(">>> Deploying host scripts to VM...")

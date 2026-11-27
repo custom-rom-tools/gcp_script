@@ -569,7 +569,15 @@ def resolve_artifacts(raw_inputs: list[str], build_type: str = "rom", remote_sub
         except Exception:
             pass
 
-    return valid_targets
+    def _upload_order_key(path: Path) -> int:
+        suf = path.suffix.lower()
+        if suf in {".sha256sum", ".sha256", ".md5sum", ".md5"}:
+            return 1
+        if suf in {".json", ".txt"}:
+            return 2
+        return 0
+
+    return sorted(valid_targets, key=_upload_order_key)
 
 
 def upload_sf(files: list[Path], remote_subdir: str, key_file: Path | None) -> str | None:

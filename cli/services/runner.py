@@ -273,12 +273,12 @@ def sync_build_tools_to_vm(vm: dict) -> bool:
                 ok = False
                 print(f"\n>>> Warning: could not sync {folder}: {(res.stderr or res.stdout).strip()}")
 
-    uploader = REPO_ROOT / "upload.py"
+    uploader = REPO_ROOT / "scripts" / "upload.py"
     if uploader.is_file():
         vm_push(vm, [uploader], "~/upload.py")
-    uploader = REPO_ROOT / "clean.py"
-    if uploader.is_file():
-        vm_push(vm, [uploader], "~/clean.py")
+    cleaner = REPO_ROOT / "scripts" / "clean.py"
+    if cleaner.is_file():
+        vm_push(vm, [cleaner], "~/clean.py")
 
     print(" Done." if ok else " Partial.", flush=True)
     return ok
@@ -288,7 +288,7 @@ def deploy_watchdog(vm: dict) -> bool:
     """Upload idle_watchdog.sh and install/restart its systemd unit."""
     if not ensure_vm_online(vm):
         return False
-    script = REPO_ROOT / "idle_watchdog.sh"
+    script = REPO_ROOT / "scripts" / "idle_watchdog.sh"
     if script.is_file():
         print(">>> Updating idle-shutdown watchdog...", end="", flush=True)
         res = vm_push(vm, [script], "/tmp/idle_watchdog.sh")
