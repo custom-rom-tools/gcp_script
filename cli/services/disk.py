@@ -95,65 +95,44 @@ def normalize_disk_name(target_disk: str, vm: dict | None = None) -> str:
 
 
 def get_disk_meta(target_disk: str, vm: dict | None = None) -> dict:
-    """Return normalized metadata for a ROM / recovery / general disk."""
+    """Return normalized metadata for a ROM & Kernel or Recovery disk."""
     disk_name = normalize_disk_name(target_disk, vm)
     general_name = (vm or {}).get("general_disk") or GENERAL_DISK
+    lower = disk_name.lower()
 
-    for key in ("a16", "a17", "recovery"):
-        preset = DISK_PRESETS[key]
-        if disk_name == preset["name"]:
-            return {
-                "name": disk_name,
-                "device_name": preset["device_name"],
-                "default_mount": preset["default_mount"],
-                "size_gb": preset["size_gb"],
-                "disk_type": preset["type"],
-                "description": {
-                    "a16": "Dedicated 500GB storage for Android 16 builds",
-                    "a17": "Dedicated 500GB storage for Android 17 builds",
-                    "recovery": "Dedicated 300GB storage for Recovery builds",
-                }[key],
-                "is_general": False,
-                "role": key,
-            }
-
-    if disk_name == general_name or disk_name == GENERAL_DISK:
-        preset = DISK_PRESETS["general"]
+    # Recovery disk detection
+    rec_preset = DISK_PRESETS.get("recovery", {})
+    if lower == rec_preset.get("name", "gcp-recovery-disk").lower() or "recovery" in lower or lower in ("rec", "ofrp", "twrp"):
         return {
             "name": disk_name,
-            "device_name": preset["device_name"] or GENERAL_DEV_NAME,
-            "default_mount": "",
-            "size_gb": preset["size_gb"],
-            "disk_type": preset["type"],
-            "description": "Shared general storage for ROM and Recovery builds",
-            "is_general": True,
-            "role": "general",
+            "device_name": rec_preset.get("device_name", "rom-recovery"),
+            "default_mount": "/mnt/recovery",
+            "size_gb": rec_preset.get("size_gb", 300),
+            "disk_type": rec_preset.get("type", "pd-balanced"),
+            "description": "Dedicated 300GB storage for Recovery builds (/mnt/recovery)",
+            "is_general": False,
+            "role": "recovery",
         }
 
-    # Custom disk: keep the caller's name and derive a stable device name.
-    device_name = re.sub(r"[^a-z0-9-]+", "-", disk_name.lower()).strip("-") or disk_name
+    # ROM & Kernel storage detection (all Android ROMs & kernels use /mnt/rom)
+    gen_preset = DISK_PRESETS.get("general", {})
     return {
         "name": disk_name,
-        "device_name": device_name,
-        "default_mount": "",
-        "size_gb": 500,
-        "disk_type": "pd-balanced",
-        "description": f"Custom secondary storage disk {disk_name}",
-        "is_general": False,
-        "role": "custom",
+        "device_name": gen_preset.get("device_name", GENERAL_DEV_NAME),
+        "default_mount": "/mnt/rom",
+        "size_gb": gen_preset.get("size_gb", 500),
+        "disk_type": gen_preset.get("type", "pd-balanced"),
+        "description": "Dedicated 500GB storage for ROM & Kernel builds (/mnt/rom)",
+        "is_general": True,
+        "role": "rom",
     }
 
 
 def get_disk_role_label(target_disk: str, vm: dict | None = None) -> str:
     meta = get_disk_meta(target_disk, vm)
-    role = meta.get("role")
-    if role in ("rom", "a16", "a17"):
-        return "ROM & Kernel Storage -> /mnt/rom"
-    if role == "recovery":
-        return "Recovery Specific -> /mnt/recovery"
-    if role == "general":
-        return "General Shared -> /mnt/rom"
-    return "Custom Secondary"
+    if meta.get("role") == "recovery" or meta.get("default_mount") == "/mnt/recovery":
+        return "Recovery Storage -> /mnt/recovery"
+    return "ROM & Kernel Storage -> /mnt/rom"
 
 
 # ---------------------------------------------------------------------------
@@ -804,13 +783,12 @@ sudo blkid "$REAL_DEV" | grep -q 'TYPE="ext4"'
         print((res.stderr or res.stdout or "").strip()[-1000:])
         return False
 
-    if meta["role"] in ("a16", "a17", "recovery") and meta["default_mount"]:
+    if meta.get("default_mount"):
         if not mount_disk_on_vm(vm, disk_name, meta["default_mount"]):
             return False
         print(f">>> Disk {disk_name} formatted cleanly (ext4) and mounted at {meta['default_mount']}.")
     else:
         print(f">>> Disk {disk_name} formatted cleanly (ext4)!")
-        print("    It stays unmounted until a build starts.")
     return True
 
 
