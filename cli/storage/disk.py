@@ -27,27 +27,29 @@ def submenu_disk_manager(vm: dict):
 
         print(f" {BOLD}[CREATE & LINK]{NC}")
         print(f"  {GREEN}1){NC} Create ROM & Kernel Disk "
-              f"({general['size_gb']}GB - dedicated /mnt/rom)")
+              f"({general['size_gb']}GB - default /mnt/rom)")
         print(f"  {GREEN}2){NC} Create Recovery Disk "
-              f"({rec['size_gb']}GB - dedicated /mnt/recovery)")
+              f"({rec['size_gb']}GB - default /mnt/recovery)")
+        print(f"  {GREEN}3){NC} Create Custom Disk "
+              f"(Any size & name)")
         print()
         print(f" {BOLD}[ATTACH / DETACH / MOUNT / FORMAT]{NC}")
-        print(f"  {BLUE}3){NC} Attach Disk")
-        print(f"  {YELLOW}4){NC} Detach Disk")
-        print(f"  {GREEN}5){NC} Mount Disk")
-        print(f"  {RED}6){NC} Format Disk (Clean ext4 wipe)")
+        print(f"  {BLUE}4){NC} Attach Disk")
+        print(f"  {YELLOW}5){NC} Detach Disk")
+        print(f"  {GREEN}6){NC} Mount Disk")
+        print(f"  {RED}7){NC} Format Disk (Clean ext4 wipe)")
         print()
         print(f" {BOLD}[DELETE - STOP BILLING]{NC}")
-        print(f"  {RED}7){NC} Delete Disk Permanently")
+        print(f"  {RED}8){NC} Delete Disk Permanently")
         print()
         print(f" {BOLD}[INFO]{NC}")
-        print(f"  {CYAN}8){NC} Check Disk Space & Mounts")
+        print(f"  {CYAN}9){NC} Check Disk Space & Mounts")
         print()
         print(f"  {YELLOW}r){NC} Reload / Refresh Disks")
         print(f"  {RED}0 / q){NC} Back to Main Menu / Quit")
         print_divider()
 
-        choice = read_input(" Select option [0-8, r, q, default: 0]: ").strip().lower()
+        choice = read_input(" Select option [0-9, r, q, default: 0]: ").strip().lower()
         if choice in ("0", "q", "quit", "exit"):
             return
         if choice in ("r", "reload", "refresh"):
@@ -64,44 +66,81 @@ def submenu_disk_manager(vm: dict):
             desc = preset.get("description", f"Dedicated {default_dsize}GB storage for {role_title} ({target_mp})")
 
             print(f"\n{BOLD}--- Create & Link {role_title} ---{NC}")
-            print(f" Target Mount Point : {CYAN}{target_mp}{NC}")
-            print(f" Suggested Disk Name: {GREEN}{default_dname}{NC}")
-            print(f" Suggested Disk Size: {GREEN}{default_dsize} GB{NC}\n")
+            print(f" Default Disk Name  : {GREEN}{default_dname}{NC}")
+            print(f" Default Disk Size  : {GREEN}{default_dsize} GB{NC}")
+            print(f" Target Mount Point : {CYAN}{target_mp}{NC}\n")
 
-            in_dname = read_input(f"Enter disk name [default: {default_dname}, q=abort]: ").strip()
+            ans = read_input(f"Create '{default_dname}' with default values ({default_dsize}GB for {target_mp})? [Y/n, e=edit, default: Y]: ").strip().lower()
+            if ans in ("q", "quit", "abort", "n", "no"):
+                print(">>> Disk creation cancelled.")
+                pause()
+                continue
+
+            target_dname = default_dname
+            target_dsize = default_dsize
+            if ans in ("e", "edit", "custom"):
+                in_dname = read_input(f"Enter disk name [default: {default_dname}, q=abort]: ").strip()
+                if in_dname.lower() in ("q", "quit", "exit"):
+                    print(">>> Disk creation cancelled.")
+                    pause()
+                    continue
+                target_dname = in_dname or default_dname
+                in_dsize = read_input(f"Enter disk size in GB [default: {default_dsize}, q=abort]: ").strip()
+                if in_dsize.lower() in ("q", "quit", "exit"):
+                    print(">>> Disk creation cancelled.")
+                    pause()
+                    continue
+                target_dsize = int(in_dsize) if in_dsize.isdigit() and int(in_dsize) > 0 else default_dsize
+
+            create_and_attach_disk(vm, target_dname, target_dsize, desc)
+            pause()
+        elif choice == "3":
+            print(f"\n{BOLD}--- Create & Link Custom Disk ---{NC}")
+            print("Create a disk with any custom name, size, and mount point.\n")
+            in_dname = read_input("Enter disk name [default: gcp-custom-disk, q=abort]: ").strip()
             if in_dname.lower() in ("q", "quit", "exit"):
                 print(">>> Disk creation cancelled.")
                 pause()
                 continue
-            target_dname = in_dname or default_dname
-            in_dsize = read_input(f"Enter disk size in GB [default: {default_dsize}, q=abort]: ").strip()
+            target_dname = in_dname or "gcp-custom-disk"
+
+            in_dsize = read_input("Enter disk size in GB [default: 100, q=abort]: ").strip()
             if in_dsize.lower() in ("q", "quit", "exit"):
                 print(">>> Disk creation cancelled.")
                 pause()
                 continue
-            target_dsize = int(in_dsize) if in_dsize.isdigit() and int(in_dsize) > 0 else default_dsize
+            target_dsize = int(in_dsize) if in_dsize.isdigit() and int(in_dsize) > 0 else 100
+
+            in_mp = read_input("Enter target mount point [default: /mnt/custom, q=abort]: ").strip()
+            if in_mp.lower() in ("q", "quit", "exit"):
+                print(">>> Disk creation cancelled.")
+                pause()
+                continue
+            target_mp = in_mp or "/mnt/custom"
+
+            desc = f"Custom {target_dsize}GB storage disk {target_dname} ({target_mp})"
             conf = read_input(f"Proceed with creating '{target_dname}' ({target_dsize}GB for {target_mp})? [Y/n, default: Y, q=abort]: ").strip().lower()
             if conf not in ("n", "no", "q", "quit", "exit"):
                 create_and_attach_disk(vm, target_dname, target_dsize, desc)
             else:
                 print(">>> Disk creation cancelled.")
             pause()
-        elif choice == "3":
+        elif choice in ("4", "attach"):
             attach_disk_action(vm)
             pause()
-        elif choice == "4":
+        elif choice in ("5", "detach"):
             detach_disk_action(vm)
             pause()
-        elif choice == "5":
+        elif choice in ("6", "mount"):
             mount_disk_action(vm)
             pause()
-        elif choice == "6":
+        elif choice in ("7", "format"):
             format_disk_action(vm)
             pause()
-        elif choice in ("7", "9"):
+        elif choice in ("8", "delete"):
             delete_disk_action(vm)
             pause()
-        elif choice in ("8", "10"):
+        elif choice in ("9", "10", "info", "space"):
             if not is_vm_running(vm):
                 print(">>> VM is powered OFF. Start it to inspect live disk space and mounts.")
                 pause()

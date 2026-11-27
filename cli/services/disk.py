@@ -116,23 +116,40 @@ def get_disk_meta(target_disk: str, vm: dict | None = None) -> dict:
 
     # ROM & Kernel storage detection (all Android ROMs & kernels use /mnt/rom)
     gen_preset = DISK_PRESETS.get("general", {})
+    if lower in ("gcp-general-disk", "gcp-rom-disk", "general", "rom", "shared", "kernel", general_name.lower()) or "rom" in lower or "kernel" in lower:
+        return {
+            "name": disk_name,
+            "device_name": gen_preset.get("device_name", GENERAL_DEV_NAME),
+            "default_mount": "/mnt/rom",
+            "size_gb": gen_preset.get("size_gb", 500),
+            "disk_type": gen_preset.get("type", "pd-balanced"),
+            "description": "Dedicated 500GB storage for ROM & Kernel builds (/mnt/rom)",
+            "is_general": True,
+            "role": "rom",
+        }
+
+    # Custom disk: keep the caller's name and derive a stable device name.
+    device_name = re.sub(r"[^a-z0-9-]+", "-", disk_name.lower()).strip("-") or disk_name
     return {
         "name": disk_name,
-        "device_name": gen_preset.get("device_name", GENERAL_DEV_NAME),
-        "default_mount": "/mnt/rom",
-        "size_gb": gen_preset.get("size_gb", 500),
-        "disk_type": gen_preset.get("type", "pd-balanced"),
-        "description": "Dedicated 500GB storage for ROM & Kernel builds (/mnt/rom)",
-        "is_general": True,
-        "role": "rom",
+        "device_name": device_name,
+        "default_mount": "",
+        "size_gb": 100,
+        "disk_type": "pd-balanced",
+        "description": f"Custom secondary storage disk {disk_name}",
+        "is_general": False,
+        "role": "custom",
     }
 
 
 def get_disk_role_label(target_disk: str, vm: dict | None = None) -> str:
     meta = get_disk_meta(target_disk, vm)
-    if meta.get("role") == "recovery" or meta.get("default_mount") == "/mnt/recovery":
+    role = meta.get("role")
+    if role == "recovery" or meta.get("default_mount") == "/mnt/recovery":
         return "Recovery Storage -> /mnt/recovery"
-    return "ROM & Kernel Storage -> /mnt/rom"
+    if role == "rom" or meta.get("default_mount") == "/mnt/rom":
+        return "ROM & Kernel Storage -> /mnt/rom"
+    return "Custom Secondary Disk"
 
 
 # ---------------------------------------------------------------------------
