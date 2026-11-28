@@ -162,6 +162,35 @@
             "manifest_branch": "aosp-16"
           }
         }
+      },
+      "17": {
+        "rom_manifest_url": "https://github.com/Lunaris-AOSP/android",
+        "rom_manifest_branch": "17",
+        "build_target": "bacon",
+        "lunch_prefix": "lineage",
+        "lunch_suffix": "",
+        "fallback_lunch_without_suffix": false,
+        "work_dir": "/mnt/rom/lunaris",
+        "disk_mount": "/mnt/rom",
+        "disk_name": "gcp-rom-disk",
+        "upload_subdir_suffix": "Lunaris/17",
+        "devices": {
+          "RMX2061": {
+            "name": "Realme 6 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX2061-manifest",
+            "manifest_branch": "aosp-17"
+          },
+          "RMX2170": {
+            "name": "Realme 7 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX2170-manifest",
+            "manifest_branch": "aosp-17"
+          },
+          "RMX3081": {
+            "name": "Realme 8 Pro",
+            "manifest_url": "https://github.com/realme-atoll/RMX3081-manifest",
+            "manifest_branch": "aosp-17"
+          }
+        }
       }
     }
   }

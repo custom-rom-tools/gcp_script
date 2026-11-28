@@ -51,5 +51,41 @@ def submenu_lineage(vm: dict, version: str = "16"):
 
 
 def submenu_lunaris(vm: dict, version: str = "16"):
-    """Submenu for compiling Lunaris AOSP (Android 16)."""
+    """Submenu for compiling Lunaris AOSP (Android 16 or 17)."""
     _run_rom_build(vm, "lunaris", "Lunaris AOSP", version)
+
+
+def submenu_android_builds(vm: dict, version: str = "16"):
+    """Unified submenu for Android ROMs and Kernel of a specific version."""
+    from cli.base import print_divider, read_input, GREEN, CYAN, YELLOW, MAGENTA, RED, BOLD, NC
+    from cli.builds import kernel
+
+    while True:
+        clear_screen()
+        ver_color = GREEN if version == "16" else CYAN
+        print_header(f"ANDROID {version} BUILDS (ROMS & KERNEL)")
+        print(f" {BOLD}[ROMS - ANDROID {version}]{NC}")
+        print(f"   {ver_color}1){NC} Evolution X {version}")
+        print(f"   {ver_color}2){NC} LineageOS {version}")
+        print(f"   {ver_color}3){NC} Lunaris AOSP {version}")
+        print()
+        print(f" {BOLD}[KERNEL - ANDROID {version}]{NC}")
+        print(f"   {MAGENTA}4){NC} Android {version} Kernel (boot.img)")
+        print()
+        print(f"   {YELLOW}r){NC} Reload / Refresh")
+        print(f"   {RED}0 / q){NC} Back to Main Menu")
+        print_divider()
+
+        choice = read_input(f" Select Android {version} target [1-4, r, q, default: 0]: ").strip().lower()
+        if choice in ("0", "q", "quit", "exit", "back"):
+            return
+        if choice in ("r", "reload", "refresh"):
+            continue
+        if choice == "1":
+            submenu_evolution(vm, version)
+        elif choice == "2":
+            submenu_lineage(vm, version)
+        elif choice == "3":
+            submenu_lunaris(vm, version)
+        elif choice == "4":
+            kernel.submenu_atoll_kernel(vm, version)

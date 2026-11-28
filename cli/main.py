@@ -70,56 +70,44 @@ def run_build_dashboard(vm: dict):
         print_status("Status", status_text, status_color)
         print_divider()
 
-        print_section("[ANDROID 16 ROM]")
-        print(f"   {GREEN}1){NC} Evolution X 16")
-        print(f"   {GREEN}2){NC} LineageOS 16")
-        print(f"   {GREEN}3){NC} Lunaris AOSP 16")
-        print()
-        print_section("[ANDROID 17 ROM]")
-        print(f"   {CYAN}4){NC} Evolution X 17")
-        print(f"   {CYAN}5){NC} LineageOS 17")
-        print()
-        print_section("[RECOVERY]")
-        print(f"   {YELLOW}6){NC} OrangeFox Recovery")
-        print(f"   {YELLOW}7){NC} TWRP Recovery")
-        print(f"   {YELLOW}8){NC} All Recoveries Batch (OFRP + TWRP)")
-        print()
-        print_section("[KERNEL]")
-        print(f"   {MAGENTA}9){NC} Android 16 Kernel (boot.img)")
-        print(f"  {MAGENTA}10){NC} Android 17 Kernel (boot.img)")
+        print_section("[BUILD TARGETS]")
+        print(f"   {GREEN}1){NC} Android 16 Builds (ROMs & Kernel)")
+        print(f"   {CYAN}2){NC} Android 17 Builds (ROMs & Kernel)")
+        print(f"   {YELLOW}3){NC} Recovery Builds (OrangeFox & TWRP)")
+        print(f"   {MAGENTA}4){NC} Kernel Builds (A16 & A17 boot.img)")
         print()
         print_section("[DOWNLOADS TO MAC]")
-        print(f"  {BLUE}11){NC} Download ROM (.zip)")
-        print(f"  {BLUE}12){NC} Download Recovery (.img/.zip)")
-        print(f"  {BLUE}13){NC} Download Kernel (.img)")
-        print(f"  {BLUE}14){NC} {CYAN}Download Build Log (.log){NC}")
+        print(f"   {BLUE}5){NC} Download ROM (.zip)")
+        print(f"   {BLUE}6){NC} Download Recovery (.img/.zip)")
+        print(f"   {BLUE}7){NC} Download Kernel (.img)")
+        print(f"   {BLUE}8){NC} {CYAN}Download Build Log (.log){NC}")
         print()
         print_section("[MONITOR]")
-        print(f"  {BOLD}15){NC} {GREEN}Live Build Progress (tmux){NC}")
-        print(f"  {BOLD}16){NC} {CYAN}Build Status & Error Logs{NC}")
-        print(f"  {BOLD}17){NC} {GREEN}Live System Monitor (htop/top/net){NC}")
-        print(f"  {BOLD}18){NC} {RED}Stop Active Build{NC}")
+        print(f"   {BOLD}9){NC} {GREEN}Live Build Progress (tmux){NC}")
+        print(f"  {BOLD}10){NC} {CYAN}Build Status & Error Logs{NC}")
+        print(f"  {BOLD}11){NC} {GREEN}Live System Monitor (htop/top/net){NC}")
+        print(f"  {BOLD}12){NC} {RED}Stop Active Build{NC}")
         print()
-        print_section("[VM]")
-        print(f"  {BOLD}19){NC} VM Status & Info")
-        print(f"  {BOLD}20){NC} Start VM")
-        print(f"  {BOLD}21){NC} Stop VM")
-        print(f"  {BOLD}22){NC} {YELLOW}Restart VM{NC}")
-        print(f"  {BOLD}23){NC} Disk Manager")
-        print(f"  {BOLD}24){NC} Swap Manager")
-        print(f"  {BOLD}25){NC} {CYAN}Machine Type Switcher{NC}")
-        print(f"  {BOLD}26){NC} SSH Console")
+        print_section("[VM MANAGEMENT]")
+        print(f"  {BOLD}13){NC} VM Status & Info")
+        print(f"  {BOLD}14){NC} Start VM")
+        print(f"  {BOLD}15){NC} Stop VM")
+        print(f"  {BOLD}16){NC} {YELLOW}Restart VM{NC}")
+        print(f"  {BOLD}17){NC} Disk Manager")
+        print(f"  {BOLD}18){NC} Swap Manager")
+        print(f"  {BOLD}19){NC} {CYAN}Machine Type Switcher{NC}")
+        print(f"  {BOLD}20){NC} SSH Console")
         print()
         print_section("[TOOLS]")
-        print(f"  {BOLD}27){NC} Setup & Tools")
-        print(f"  {BOLD}28){NC} {CYAN}Upload Links (works while VM stopped){NC}")
-        print(f"  {BOLD}29){NC} Switch / Manage VMs")
+        print(f"  {BOLD}21){NC} Setup & Tools")
+        print(f"  {BOLD}22){NC} {CYAN}Upload Links (works while VM stopped){NC}")
+        print(f"  {BOLD}23){NC} Switch / Manage VMs")
         print()
         print(f"   {YELLOW}r){NC} Reload / Refresh Menu")
         print(f"   {RED}q){NC} Quit")
         print_divider()
 
-        choice = read_input(" Select option [1-29, r, q, default: r]: ").strip().lower()
+        choice = read_input(" Select option [1-23, r, q, default: r]: ").strip().lower()
 
         if choice in ("q", "quit", "exit"):
             print("Goodbye!")
@@ -128,72 +116,62 @@ def run_build_dashboard(vm: dict):
             reload_all()
             continue
 
-        if choice == "1":
-            rom.submenu_evolution(vm, "16")
-        elif choice == "2":
-            rom.submenu_lineage(vm, "16")
-        elif choice == "3":
-            rom.submenu_lunaris(vm, "16")
-        elif choice == "4":
-            rom.submenu_evolution(vm, "17")
-        elif choice == "5":
-            rom.submenu_lineage(vm, "17")
-        elif choice == "6":
-            recovery.submenu_orangefox(vm)
-        elif choice == "7":
-            recovery.submenu_twrp(vm)
-        elif choice == "8":
-            recovery.submenu_batch_recoveries(vm)
-        elif choice == "9":
-            kernel.submenu_atoll_kernel(vm, "16")
-        elif choice == "10":
-            kernel.submenu_atoll_kernel(vm, "17")
-        elif choice == "11":
+        if choice in ("1", "a16", "16"):
+            rom.submenu_android_builds(vm, "16")
+        elif choice in ("2", "a17", "17"):
+            rom.submenu_android_builds(vm, "17")
+        elif choice in ("3", "rec", "recovery"):
+            recovery.submenu_recovery_builds(vm)
+        elif choice in ("4", "k", "kernel"):
+            kernel.submenu_kernel_builds(vm)
+        elif choice in ("5", "11"):
             download.submenu_download_rom(vm)
-        elif choice == "12":
+        elif choice in ("6", "12"):
             download.submenu_download_recovery(vm)
-        elif choice == "13":
+        elif choice in ("7", "13"):
             download.submenu_download_kernel(vm)
-        elif choice == "14":
+        elif choice in ("8", "14"):
             download.submenu_download_log(vm)
-        elif choice == "15":
+        elif choice in ("9", "15"):
             monitor.submenu_live_tmux(vm)
-        elif choice == "16":
+        elif choice in ("10", "16"):
             monitor.submenu_build_status(vm)
-        elif choice == "17":
+        elif choice in ("11", "17"):
             monitor.submenu_live_monitor(vm)
-        elif choice == "18":
+        elif choice in ("12", "18"):
             monitor.submenu_stop_build(vm)
-        elif choice == "19":
+        elif choice in ("13", "19"):
             monitor.submenu_vm_info(vm)
-        elif choice == "20":
+        elif choice in ("14", "20"):
             clear_screen()
             start_vm(vm)
             base.pause()
-        elif choice == "21":
+        elif choice in ("15", "21"):
             clear_screen()
             stop_vm(vm)
             base.pause()
-        elif choice == "22":
+        elif choice in ("16", "22"):
             clear_screen()
             restart_vm(vm)
             base.pause()
-        elif choice == "23":
+        elif choice in ("17", "23"):
             disk.submenu_disk_manager(vm)
-        elif choice == "24":
+        elif choice in ("18", "24"):
             swap.submenu_swap_manager(vm)
-        elif choice == "25":
+        elif choice in ("19", "25"):
             setup.submenu_machine_type(vm)
-        elif choice == "26":
+        elif choice in ("20", "26"):
             console.submenu_ssh_console(vm)
-        elif choice == "27":
+        elif choice in ("21", "27"):
             setup.run_tools_menu(vm)
-        elif choice == "28":
+        elif choice in ("22", "28"):
             link.submenu_view_links(vm)
-        elif choice == "29":
+        elif choice in ("23", "29"):
             new_vm = run_cluster_menu()
             if new_vm and new_vm.get("instance"):
                 vm = new_vm
+                from cli.services.vm import invalidate_vm_cache
+                invalidate_vm_cache(vm)
         else:
             print(f"{RED}Invalid choice.{NC}")
             base.pause()

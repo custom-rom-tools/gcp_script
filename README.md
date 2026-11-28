@@ -60,31 +60,23 @@ active build target, create a VM, delete a VM, or start/stop any VM.
 ## Interactive Dashboard
 
 ```
-[ANDROID 16 ROM]            [DOWNLOADS TO MAC]
- 1) Evolution X 16           11) Download ROM (.zip)
- 2) LineageOS 16             12) Download Recovery (.img/.zip)
- 3) Lunaris AOSP 16          13) Download Kernel (.img)
-                             14) Download Build Log (.log)
-[ANDROID 17 ROM]
- 4) Evolution X 17          [MONITOR]
- 5) LineageOS 17             15) Live Build Progress (tmux)
-                             16) Build Status & Error Logs
-[RECOVERY]                   17) Live System Monitor (htop/top/net)
- 6) OrangeFox Recovery       18) Stop Active Build
- 7) TWRP Recovery
- 8) All Recoveries Batch    [VM]
-                             19) VM Status & Info
-[KERNEL]                     20) Start VM
- 9) Android 16 Kernel        21) Stop VM
-10) Android 17 Kernel        22) Disk Manager
-                             23) Swap Manager
-                             24) Machine Type Switcher
-                             25) SSH Console
+[BUILD TARGETS]                 [DOWNLOADS TO MAC]
+ 1) Android 16 (ROMs & Kernel)   5) Download ROM (.zip)
+ 2) Android 17 (ROMs & Kernel)   6) Download Recovery (.img/.zip)
+ 3) Recovery (OFRP & TWRP)       7) Download Kernel (.img)
+ 4) Kernel (A16 & A17 boot.img)  8) Download Build Log (.log)
 
-[TOOLS]
- 26) Setup & Tools
- 27) Upload Links
- 28) Switch / Manage VMs
+[MONITOR]                       [VM MANAGEMENT]
+ 9) Live Build Progress (tmux)  13) VM Status & Info
+10) Build Status & Error Logs   14) Start VM
+11) Live System Monitor         15) Stop VM
+12) Stop Active Build           16) Restart VM
+                                17) Disk Manager
+[TOOLS]                         18) Swap Manager
+21) Setup & Tools               19) Machine Type Switcher
+22) Upload Links                20) SSH Console
+23) Switch / Manage VMs
+ r) Reload / Refresh Menu
  q) Quit
 ```
 
