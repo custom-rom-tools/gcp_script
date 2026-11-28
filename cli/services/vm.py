@@ -93,9 +93,21 @@ def run_gcloud(args: list[str], check: bool = True, timeout: int | None = None) 
 def check_gcloud_auth(refresh: bool = False) -> str | None:
     """Return the active Google Cloud account email, or None."""
     now = time.time()
-    ttl = 300.0 if _AUTH_CACHE["value"] else 15.0
-    if not refresh and (now - _AUTH_CACHE["checked"] < ttl):
+    ttl = 300.0 if _AUTH_CACHE["value"] else 60.0
+    if not refresh and _AUTH_CACHE["value"] and (now - _AUTH_CACHE["checked"] < ttl):
         return _AUTH_CACHE["value"]
+
+    auth_file = CACHE_DIR / "gcp_farm_auth.json"
+    if not refresh and not _AUTH_CACHE["value"] and auth_file.is_file():
+        try:
+            data = json.loads(auth_file.read_text(encoding="utf-8"))
+            if now - float(data.get("ts", 0)) < 300.0 and data.get("account"):
+                _AUTH_CACHE["value"] = data["account"]
+                _AUTH_CACHE["checked"] = now
+                return _AUTH_CACHE["value"]
+        except Exception:
+            pass
+
     try:
         res = run_gcloud(["auth", "list", "--format=json"], check=False, timeout=30)
         accounts = json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else []
@@ -103,6 +115,11 @@ def check_gcloud_auth(refresh: bool = False) -> str | None:
         if not active and accounts:
             active = accounts[0].get("account")
         _AUTH_CACHE["value"] = active
+        if active:
+            try:
+                auth_file.write_text(json.dumps({"account": active, "ts": now}), encoding="utf-8")
+            except Exception:
+                pass
     except Exception:
         _AUTH_CACHE["value"] = None
     _AUTH_CACHE["checked"] = now
@@ -119,8 +136,13 @@ def login_gcloud() -> bool:
         return False
     _AUTH_CACHE["checked"] = 0.0
     _PROJECT_CACHE["checked"] = 0.0
+    try:
+        (CACHE_DIR / "gcp_farm_auth.json").unlink(missing_ok=True)
+        (CACHE_DIR / "gcp_farm_project.json").unlink(missing_ok=True)
+    except Exception:
+        pass
     if res.returncode == 0:
-        account = check_gcloud_auth()
+        account = check_gcloud_auth(refresh=True)
         print(f"\n>>> Successfully authenticated as: {account or 'unknown'}")
         return True
     print("\n>>> Error: Authentication failed or was cancelled.")
@@ -142,19 +164,35 @@ def ensure_gcloud_authenticated() -> bool:
 
 
 def get_default_project() -> str:
-    """Resolve the active GCP project ID from .env or gcloud config."""
+    """Resolve the active GCP project ID from .env, local cache, or gcloud config."""
     load_local_env()
     project = os.environ.get("GCP_PROJECT", "").strip()
     if project:
         return project
     now = time.time()
-    if now - _PROJECT_CACHE["checked"] < 30:
+    if _PROJECT_CACHE["value"] and (now - _PROJECT_CACHE["checked"] < 300.0):
         return _PROJECT_CACHE["value"]
+
+    proj_file = CACHE_DIR / "gcp_farm_project.json"
+    if not _PROJECT_CACHE["value"] and proj_file.is_file():
+        try:
+            data = json.loads(proj_file.read_text(encoding="utf-8"))
+            if now - float(data.get("ts", 0)) < 300.0 and data.get("project"):
+                _PROJECT_CACHE["value"] = data["project"]
+                _PROJECT_CACHE["checked"] = now
+                return _PROJECT_CACHE["value"]
+        except Exception:
+            pass
+
     try:
         res = run_gcloud(["config", "get-value", "project"], check=False, timeout=15)
         value = res.stdout.strip()
         if value and "(unset)" not in value:
             _PROJECT_CACHE["value"] = value
+            try:
+                proj_file.write_text(json.dumps({"project": value, "ts": now}), encoding="utf-8")
+            except Exception:
+                pass
     except Exception:
         pass
     _PROJECT_CACHE["checked"] = now
@@ -201,6 +239,7 @@ def _write_json(path: Path, data) -> None:
 def invalidate_vm_cache(vm: dict) -> None:
     key = f"{vm.get('project', '')}:{vm.get('zone', '')}:{vm.get('instance', '')}"
     _VM_INFO_CACHE.pop(key, None)
+    _DISCOVER_CACHE.clear()
     for path in (_ip_cache_path(vm), _state_cache_path(vm)):
         try:
             path.unlink()
@@ -212,11 +251,11 @@ def invalidate_vm_cache(vm: dict) -> None:
 # Discovery / active VM
 # ---------------------------------------------------------------------------
 def discover_instances(project: str = "", refresh: bool = False) -> list[dict]:
-    """List all compute instances across zones (cached for 10 seconds)."""
+    """List all compute instances across zones (cached for 60 seconds)."""
     target_project = project or get_default_project()
     now = time.time()
     cached = _DISCOVER_CACHE.get(target_project)
-    if not refresh and cached and now - cached[0] < 10:
+    if not refresh and cached and now - cached[0] < 60:
         return cached[1]
 
     args = [
@@ -273,11 +312,9 @@ def discover_instances(project: str = "", refresh: bool = False) -> list[dict]:
     return discovered
 
 
-def get_active_vm() -> dict:
+def get_active_vm(refresh: bool = False) -> dict:
     """Resolve the active target VM from ~/.gcp_active_vm, discovery, or env fallback."""
     load_local_env()
-    project = get_default_project()
-    instances = discover_instances(project)
 
     saved: dict[str, str] = {}
     if ACTIVE_VM_FILE.is_file():
@@ -291,6 +328,19 @@ def get_active_vm() -> dict:
                         saved[key] = value
         except OSError:
             pass
+
+    # Fast path: If saved active VM configuration exists and not refreshing, return immediately (<0.001s)
+    if not refresh and saved.get("instance") and saved.get("zone"):
+        return {
+            "instance": saved["instance"],
+            "zone": saved["zone"],
+            "project": saved.get("project") or get_default_project(),
+            "general_disk": saved.get("general_disk") or DEFAULT_GENERAL_DISK,
+            "machine_type": saved.get("machine_type", ""),
+        }
+
+    project = get_default_project()
+    instances = discover_instances(project, refresh=refresh)
 
     # If user selected an active VM via Switch/Manage VMs, respect that selection
     if instances and saved.get("instance"):
@@ -362,7 +412,7 @@ def save_active_vm(instance: str, zone: str, project: str,
 # ---------------------------------------------------------------------------
 # VM state / info
 # ---------------------------------------------------------------------------
-def check_ssh_port(ip: str, timeout: float = 1.0) -> bool:
+def check_ssh_port(ip: str, timeout: float = 0.3) -> bool:
     if not ip:
         return False
     try:
@@ -373,22 +423,30 @@ def check_ssh_port(ip: str, timeout: float = 1.0) -> bool:
 
 
 def get_vm_state(vm: dict, refresh: bool = False) -> tuple[str, str]:
-    """Return ``(status, external_ip)`` using a 15-second cache and fast SSH probe."""
+    """Return ``(status, external_ip)`` using intelligent caching and fast SSH probe."""
     now = time.time()
     state_path = _state_cache_path(vm)
+    ip_path = _ip_cache_path(vm)
+
     if not refresh:
         cached = _read_json(state_path, None)
-        if cached and now - float(cached.get("ts", 0)) < 15:
-            return str(cached.get("status", "UNKNOWN")), str(cached.get("ip", ""))
+        if cached:
+            cached_status = str(cached.get("status", "UNKNOWN"))
+            cached_ip = str(cached.get("ip", ""))
+            age = now - float(cached.get("ts", 0))
 
-    ip_path = _ip_cache_path(vm)
-    try:
-        cached_ip = ip_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        cached_ip = ""
-    if cached_ip and check_ssh_port(cached_ip):
-        _write_json(state_path, {"status": "RUNNING", "ip": cached_ip, "ts": now})
-        return "RUNNING", cached_ip
+            if cached_status == "RUNNING" and cached_ip:
+                if age < 30.0:
+                    return "RUNNING", cached_ip
+                # Quick TCP probe to port 22
+                if check_ssh_port(cached_ip, timeout=0.25):
+                    _write_json(state_path, {"status": "RUNNING", "ip": cached_ip, "ts": now})
+                    return "RUNNING", cached_ip
+            elif cached_status in ("TERMINATED", "STOPPED", "SUSPENDED") and age < 90.0:
+                # Terminated/stopped instances stay off until started explicitly
+                return cached_status, ""
+            elif age < 60.0:
+                return cached_status, cached_ip
 
     args = [
         "compute", "instances", "describe", vm["instance"],
@@ -438,11 +496,11 @@ def get_vm_ip(vm: dict) -> str:
 
 
 def get_vm_info(vm: dict, refresh: bool = False) -> dict | None:
-    """Fetch the JSON description of an instance (cached for 30 seconds)."""
+    """Fetch the JSON description of an instance (cached for 90 seconds)."""
     key = f"{vm.get('project', '')}:{vm.get('zone', '')}:{vm.get('instance', '')}"
     now = time.time()
     cached = _VM_INFO_CACHE.get(key)
-    if not refresh and cached and now - cached[0] < 30:
+    if not refresh and cached and now - cached[0] < 90:
         return cached[1]
     args = [
         "compute", "instances", "describe", vm["instance"],

@@ -112,8 +112,15 @@ def run_build_dashboard(vm: dict):
         if choice in ("q", "quit", "exit"):
             print("Goodbye!")
             sys.exit(0)
-        if choice in ("r", "reload", "refresh", ""):
+        if choice in ("r", "reload", "refresh"):
+            do_refresh = True
+            from cli.services.vm import invalidate_vm_cache
+            from cli.services.disk import invalidate_disk_cache
+            invalidate_vm_cache(vm)
+            invalidate_disk_cache(vm)
             reload_all()
+            continue
+        if choice == "":
             continue
 
         if choice in ("1", "a16", "16"):

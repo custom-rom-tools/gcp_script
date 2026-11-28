@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import time
 from pathlib import Path
 
 from cli.base import CYAN, GREEN, YELLOW, RED, BLUE, BOLD, NC, read_input, print_divider
@@ -155,18 +156,40 @@ def get_disk_role_label(target_disk: str, vm: dict | None = None) -> str:
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
+_DISKS_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_MOUNT_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def invalidate_disk_cache(vm: dict | None = None) -> None:
+    """Invalidate disk listing and mount usage caches."""
+    _DISKS_CACHE.clear()
+    _MOUNT_CACHE.clear()
+
+
 def _project_arg(vm: dict) -> list[str]:
     return [f"--project={vm['project']}"] if vm.get("project") else []
 
 
-def list_disks(vm: dict) -> list[dict]:
-    args = ["compute", "disks", "list", f"--zones={vm['zone']}", "--format=json"] + _project_arg(vm)
+def list_disks(vm: dict, refresh: bool = False) -> list[dict]:
+    zone = vm.get("zone", "")
+    key = f"{vm.get('project', '')}:{zone}"
+    now = time.time()
+    if not refresh and key in _DISKS_CACHE:
+        ts, cached = _DISKS_CACHE[key]
+        if now - ts < 60.0:
+            return cached
+
+    args = ["compute", "disks", "list", f"--zones={zone}", "--format=json"] + _project_arg(vm)
     try:
         res = run_gcloud(args, check=False, timeout=60)
         if res.returncode == 0 and res.stdout.strip():
-            return json.loads(res.stdout)
+            data = json.loads(res.stdout)
+            _DISKS_CACHE[key] = (now, data)
+            return data
     except Exception:
         pass
+    if key in _DISKS_CACHE:
+        return _DISKS_CACHE[key][1]
     return []
 
 
@@ -812,10 +835,16 @@ sudo blkid "$REAL_DEV" | grep -q 'TYPE="ext4"'
 # ---------------------------------------------------------------------------
 # Dashboard tables
 # ---------------------------------------------------------------------------
-def get_mount_info(vm: dict) -> dict:
+def get_mount_info(vm: dict, refresh: bool = False) -> dict:
     """Return device_name -> {mount_point, used, free, pct}."""
     if not is_vm_running(vm):
         return {}
+    key = f"{vm.get('instance', '')}:{vm.get('zone', '')}"
+    now = time.time()
+    if not refresh and key in _MOUNT_CACHE:
+        ts, data = _MOUNT_CACHE[key]
+        if now - ts < 30.0:
+            return data
     cmd = r"""
 for link in /dev/disk/by-id/google-*; do
   [ -e "$link" ] || continue
@@ -858,13 +887,14 @@ done
         if len(parts) == 5:
             mounts[parts[0]] = {"used": parts[1], "free": parts[2], "pct": parts[3],
                                 "mount_point": parts[4]}
+    _MOUNT_CACHE[key] = (now, mounts)
     return mounts
 
 
-def print_disk_tables(vm: dict) -> None:
-    disks = list_disks(vm)
+def print_disk_tables(vm: dict, refresh: bool = False) -> None:
+    disks = list_disks(vm, refresh=refresh)
     attached = get_attached_disks(vm)
-    usage = get_mount_info(vm)
+    usage = get_mount_info(vm, refresh=refresh)
     dev_for_disk = {d["name"]: d.get("device_name", "") for d in attached}
 
     print(f"{BOLD}Disks in Project:{NC}")

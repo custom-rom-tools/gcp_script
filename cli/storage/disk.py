@@ -54,7 +54,9 @@ def submenu_disk_manager(vm: dict):
             return
         if choice in ("r", "reload", "refresh"):
             from cli.services.vm import invalidate_vm_cache
+            from cli.services.disk import invalidate_disk_cache
             invalidate_vm_cache(vm)
+            invalidate_disk_cache(vm)
             continue
         if choice in ("1", "2"):
             is_rom = (choice == "1")
