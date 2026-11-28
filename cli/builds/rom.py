@@ -88,7 +88,6 @@ def submenu_android_builds(vm: dict, version: str = "16"):
         for r_key, r_name in available_roms:
             print(f"   {ver_color}{idx}){NC} {r_name}")
             actions[str(idx)] = ("rom", r_key, r_name)
-            actions[r_key.lower()] = ("rom", r_key, r_name)
             idx += 1
 
         kernel_idx = idx
@@ -96,8 +95,6 @@ def submenu_android_builds(vm: dict, version: str = "16"):
         print(f" {BOLD}[KERNEL]{NC}")
         print(f"   {MAGENTA}{kernel_idx}){NC} Android {version} Kernel (boot.img)")
         actions[str(kernel_idx)] = ("kernel", "atoll", f"Android {version} Kernel")
-        actions["k"] = ("kernel", "atoll", f"Android {version} Kernel")
-        actions["kernel"] = ("kernel", "atoll", f"Android {version} Kernel")
 
         print()
         print(f"   {YELLOW}r){NC} Reload / Refresh")
@@ -118,12 +115,6 @@ def submenu_android_builds(vm: dict, version: str = "16"):
                 _run_rom_build(vm, target_key, target_label, version)
             elif kind == "kernel":
                 kernel.submenu_atoll_kernel(vm, version)
-        elif choice in ("evox", "evolution") and any(k == "evolution" for k, _ in available_roms):
-            _run_rom_build(vm, "evolution", "Evolution X", version)
-        elif choice in ("los", "lineage") and any(k == "lineage" for k, _ in available_roms):
-            _run_rom_build(vm, "lineage", "LineageOS", version)
-        elif choice in ("lunaris", "lunar") and any(k == "lunaris" for k, _ in available_roms):
-            _run_rom_build(vm, "lunaris", "Lunaris AOSP", version)
         else:
             print(f"{RED}Invalid choice.{NC}")
             pause()

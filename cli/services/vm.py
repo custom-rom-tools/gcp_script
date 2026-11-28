@@ -699,12 +699,6 @@ def vm_pull(vm: dict, remote_paths: Iterable[str], local_dir: str,
         gcloud_cmd.append("--recurse")
     gcloud_cmd += sources + [local_dir, f"--zone={vm['zone']}"] + _gcloud_scope(vm)
     return subprocess.run(gcloud_cmd, capture_output=True, text=True, check=False)
-    return subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-
-def vm_scp(vm: dict, src: str | Path, dst: str, recursive: bool = False) -> subprocess.CompletedProcess:
-    """Compatibility wrapper: copy one local path to a remote destination."""
-    return vm_push(vm, [src], dst, recursive=recursive)
 
 
 # ---------------------------------------------------------------------------

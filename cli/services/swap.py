@@ -171,7 +171,3 @@ def delete_swap(vm: dict, path: str) -> bool:
     return res.returncode == 0
 
 
-def remove_swap(vm: dict, mount_point: str) -> bool:
-    """Compatibility wrapper: delete ``<mount_point>/swapfile``."""
-    path = f"{mount_point.rstrip('/')}/swapfile" if mount_point != "/" else "/swapfile"
-    return delete_swap(vm, path)

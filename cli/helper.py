@@ -154,18 +154,6 @@ def prompt_kernel_device(version: str, kernel_key: str = "atoll") -> str:
     return index.get(choice, "")
 
 
-def prompt_device_selection(rom_name: str, version: str, rom_key: str = "") -> str:
-    """Backward-compatible dispatcher used by the build submenus."""
-    if rom_key in ("ofrp", "twrp"):
-        return prompt_recovery_device(rom_name, rom_key)
-    return prompt_rom_device(rom_name, rom_key, version)
-
-
-def prompt_kernel_device_selection(kernel_name: str, kernel_key: str, version: str) -> str:
-    """Backward-compatible kernel device prompt."""
-    return prompt_kernel_device(version, kernel_key)
-
-
 def prompt_build_variant(default: str = "userdebug") -> str:
     """Prompt for a build variant, ordering the recommended one first."""
     recovery = default == "eng"

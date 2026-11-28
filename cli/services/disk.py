@@ -427,11 +427,6 @@ fi
     return True
 
 
-def mount_disk(vm: dict, disk_name: str, mount_point: str) -> bool:
-    """Compatibility alias used by older callers."""
-    return mount_disk_on_vm(vm, disk_name, mount_point)
-
-
 def unmount_disk_on_vm(vm: dict, target_disk: str) -> bool:
     disk_name = normalize_disk_name(target_disk, vm)
     meta = get_disk_meta(disk_name, vm)
