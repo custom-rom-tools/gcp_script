@@ -123,57 +123,57 @@ def run_build_dashboard(vm: dict):
         if choice == "":
             continue
 
-        if choice in ("1", "a16", "16"):
+        if choice in ("1", "a16", "android16"):
             rom.submenu_android_builds(vm, "16")
-        elif choice in ("2", "a17", "17"):
+        elif choice in ("2", "a17", "android17"):
             rom.submenu_android_builds(vm, "17")
         elif choice in ("3", "rec", "recovery"):
             recovery.submenu_recovery_builds(vm)
         elif choice in ("4", "k", "kernel"):
             kernel.submenu_kernel_builds(vm)
-        elif choice in ("5", "11"):
+        elif choice in ("5", "rom-dl", "download-rom"):
             download.submenu_download_rom(vm)
-        elif choice in ("6", "12"):
+        elif choice in ("6", "rec-dl", "download-rec", "download-recovery"):
             download.submenu_download_recovery(vm)
-        elif choice in ("7", "13"):
+        elif choice in ("7", "kernel-dl", "download-kernel"):
             download.submenu_download_kernel(vm)
-        elif choice in ("8", "14"):
+        elif choice in ("8", "log-dl", "download-log"):
             download.submenu_download_log(vm)
-        elif choice in ("9", "15"):
+        elif choice in ("9", "tmux", "live"):
             monitor.submenu_live_tmux(vm)
-        elif choice in ("10", "16"):
+        elif choice in ("10", "status", "logs", "error", "errors"):
             monitor.submenu_build_status(vm)
-        elif choice in ("11", "17"):
+        elif choice in ("11", "htop", "top", "net", "monitor"):
             monitor.submenu_live_monitor(vm)
-        elif choice in ("12", "18"):
+        elif choice in ("12", "stop-build", "cancel-build"):
             monitor.submenu_stop_build(vm)
-        elif choice in ("13", "19"):
+        elif choice in ("13", "info", "vm-info"):
             monitor.submenu_vm_info(vm)
-        elif choice in ("14", "20"):
+        elif choice in ("14", "start", "start-vm"):
             clear_screen()
             start_vm(vm)
             base.pause()
-        elif choice in ("15", "21"):
+        elif choice in ("15", "stop", "stop-vm"):
             clear_screen()
             stop_vm(vm)
             base.pause()
-        elif choice in ("16", "22"):
+        elif choice in ("16", "restart", "restart-vm", "reboot"):
             clear_screen()
             restart_vm(vm)
             base.pause()
-        elif choice in ("17", "23"):
+        elif choice in ("17", "disk", "disks", "disk-manager"):
             disk.submenu_disk_manager(vm)
-        elif choice in ("18", "24"):
+        elif choice in ("18", "swap", "swap-manager"):
             swap.submenu_swap_manager(vm)
-        elif choice in ("19", "25"):
+        elif choice in ("19", "type", "machine-type"):
             setup.submenu_machine_type(vm)
-        elif choice in ("20", "26"):
+        elif choice in ("20", "ssh", "console"):
             console.submenu_ssh_console(vm)
-        elif choice in ("21", "27"):
+        elif choice in ("21", "tools", "setup"):
             setup.run_tools_menu(vm)
-        elif choice in ("22", "28"):
+        elif choice in ("22", "links", "urls", "upload-links"):
             link.submenu_view_links(vm)
-        elif choice in ("23", "29"):
+        elif choice in ("23", "vms", "switch-vm", "cluster"):
             new_vm = run_cluster_menu()
             if new_vm and new_vm.get("instance"):
                 vm = new_vm
