@@ -57,35 +57,73 @@ def submenu_lunaris(vm: dict, version: str = "16"):
 
 def submenu_android_builds(vm: dict, version: str = "16"):
     """Unified submenu for Android ROMs and Kernel of a specific version."""
+    import json
+    from pathlib import Path
     from cli.base import print_divider, read_input, GREEN, CYAN, YELLOW, MAGENTA, RED, BOLD, NC
     from cli.builds import kernel
+
+    cfg_path = Path(__file__).resolve().parent.parent.parent / "configs" / "rom.json"
+    rom_configs = {}
+    if cfg_path.is_file():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                rom_configs = json.load(f)
+        except Exception:
+            pass
+
+    # Detect ROMs that have a configured target for this version
+    available_roms = []
+    for r_key, r_info in rom_configs.items():
+        if version in r_info.get("versions", {}):
+            available_roms.append((r_key, r_info.get("name", r_key)))
 
     while True:
         clear_screen()
         ver_color = GREEN if version == "16" else CYAN
         print_header(f"ANDROID {version} BUILDS (ROMS & KERNEL)")
-        print(f" {BOLD}[ROMS - ANDROID {version}]{NC}")
-        print(f"   {ver_color}1){NC} Evolution X {version}")
-        print(f"   {ver_color}2){NC} LineageOS {version}")
-        print(f"   {ver_color}3){NC} Lunaris AOSP {version}")
+
+        print(f" {BOLD}[ROMS]{NC}")
+        idx = 1
+        actions = {}
+        for r_key, r_name in available_roms:
+            print(f"   {ver_color}{idx}){NC} {r_name}")
+            actions[str(idx)] = ("rom", r_key, r_name)
+            actions[r_key.lower()] = ("rom", r_key, r_name)
+            idx += 1
+
+        kernel_idx = idx
         print()
-        print(f" {BOLD}[KERNEL - ANDROID {version}]{NC}")
-        print(f"   {MAGENTA}4){NC} Android {version} Kernel (boot.img)")
+        print(f" {BOLD}[KERNEL]{NC}")
+        print(f"   {MAGENTA}{kernel_idx}){NC} Android {version} Kernel (boot.img)")
+        actions[str(kernel_idx)] = ("kernel", "atoll", f"Android {version} Kernel")
+        actions["k"] = ("kernel", "atoll", f"Android {version} Kernel")
+        actions["kernel"] = ("kernel", "atoll", f"Android {version} Kernel")
+
         print()
         print(f"   {YELLOW}r){NC} Reload / Refresh")
         print(f"   {RED}0 / q){NC} Back to Main Menu")
         print_divider()
 
-        choice = read_input(f" Select Android {version} target [1-4, r, q, default: 0]: ").strip().lower()
+        max_idx = kernel_idx
+        prompt_str = f" Select Android {version} target [1-{max_idx}, r, q, default: 0]: "
+        choice = read_input(prompt_str).strip().lower()
         if choice in ("0", "q", "quit", "exit", "back"):
             return
         if choice in ("r", "reload", "refresh"):
             continue
-        if choice == "1":
-            submenu_evolution(vm, version)
-        elif choice == "2":
-            submenu_lineage(vm, version)
-        elif choice == "3":
-            submenu_lunaris(vm, version)
-        elif choice == "4":
-            kernel.submenu_atoll_kernel(vm, version)
+
+        if choice in actions:
+            kind, target_key, target_label = actions[choice]
+            if kind == "rom":
+                _run_rom_build(vm, target_key, target_label, version)
+            elif kind == "kernel":
+                kernel.submenu_atoll_kernel(vm, version)
+        elif choice in ("evox", "evolution") and any(k == "evolution" for k, _ in available_roms):
+            _run_rom_build(vm, "evolution", "Evolution X", version)
+        elif choice in ("los", "lineage") and any(k == "lineage" for k, _ in available_roms):
+            _run_rom_build(vm, "lineage", "LineageOS", version)
+        elif choice in ("lunaris", "lunar") and any(k == "lunaris" for k, _ in available_roms):
+            _run_rom_build(vm, "lunaris", "Lunaris AOSP", version)
+        else:
+            print(f"{RED}Invalid choice.{NC}")
+            pause()

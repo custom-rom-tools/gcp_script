@@ -63,8 +63,8 @@ active build target, create a VM, delete a VM, or start/stop any VM.
 [BUILD TARGETS]                 [DOWNLOADS TO MAC]
  1) Android 16 (ROMs & Kernel)   5) Download ROM (.zip)
  2) Android 17 (ROMs & Kernel)   6) Download Recovery (.img/.zip)
- 3) Recovery (OFRP & TWRP)       7) Download Kernel (.img)
- 4) Kernel (A16 & A17 boot.img)  8) Download Build Log (.log)
+ 3) Recovery                     7) Download Kernel (.img)
+ 4) Kernel                       8) Download Build Log (.log)
 
 [MONITOR]                       [VM MANAGEMENT]
  9) Live Build Progress (tmux)  13) VM Status & Info
